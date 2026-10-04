@@ -12,6 +12,7 @@ import '../../../data/controllers/motivation_controller/motivation_controller.da
 import '../../../data/controllers/workout_controller/work_out_controller.dart';
 import '../../../data/models/get_user_plan/get_workout_user_plan_details.dart';
 import '../../../data/services/recommendation_service.dart';
+import '../../../helper/analytics_helper.dart';
 import '../../../utils/app_clock.dart';
 import '../../../utils/slot_input_builder.dart';
 import '../../../utils/slot_ui_state.dart';
@@ -105,6 +106,14 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
     final now = AppClock.now();
     _selectedDate = DateTime(now.year, now.month, now.day);
     _weekStart = _mondayOfWeek(_selectedDate);
+
+    // Track schedule view
+    final isTrial = homeController.isFreeTrialUser.value;
+    AnalyticsHelper.trackWorkoutScheduleViewed(
+      planId: widget.planId,
+      userTier: isTrial ? 'free_trial' : 'paid',
+      dayOfWeek: DateFormat('EEEE').format(_selectedDate),
+    );
 
     WidgetsBinding.instance.addObserver(this);
 
@@ -364,10 +373,17 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
     final selected = _isSelected(d);
     final letter = DateFormat('E').format(d).substring(0, 1);
     return GestureDetector(
-      onTap: () => setState(() {
-        _selectedDate = DateTime(d.year, d.month, d.day);
-        _hasAutoScrolled = false;
-      }),
+      onTap: () {
+        setState(() {
+          _selectedDate = DateTime(d.year, d.month, d.day);
+          _hasAutoScrolled = false;
+        });
+        AnalyticsHelper.trackWorkoutDaySelected(
+          selectedDate: DateFormat('yyyy-MM-dd').format(d),
+          dayName: DateFormat('EEEE').format(d),
+          isToday: _isToday(d),
+        );
+      },
       child: Container(
         padding: EdgeInsets.symmetric(vertical: 9.h, horizontal: 4.w),
         decoration: BoxDecoration(

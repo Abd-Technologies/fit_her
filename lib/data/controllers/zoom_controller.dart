@@ -15,6 +15,9 @@ class ZoomMeetingGetxController extends GetxController {
   StreamSubscription<Map<String, dynamic>>? _eventSubscription;
   String? _activeSlotId;
   String? _activeMeetingNumber;
+  String? _activeClassName;
+  String? _activeTrainerName;
+  String? _activeScheduledStartTime;
   bool _presenceOpen = false;
 
   @override
@@ -38,11 +41,20 @@ class ZoomMeetingGetxController extends GetxController {
     status.value = 'Initialized';
   }
 
-  Future<bool> joinMeeting(String meetingNumber, String name,
-      {String? slotId}) async {
+  Future<bool> joinMeeting(
+    String meetingNumber,
+    String name, {
+    String? slotId,
+    String? className,
+    String? trainerName,
+    String? scheduledStartTime,
+  }) async {
     status.value = 'Joining meeting...';
     _activeSlotId = slotId;
     _activeMeetingNumber = meetingNumber;
+    _activeClassName = className;
+    _activeTrainerName = trainerName;
+    _activeScheduledStartTime = scheduledStartTime;
     _presenceOpen = false;
     return await zoomController.joinMeeting(
       meetingNumber: meetingNumber,
@@ -70,6 +82,9 @@ class ZoomMeetingGetxController extends GetxController {
       await Get.find<MotivationController>().classPresenceJoin(
         slotId: slotId,
         meetingNumber: _activeMeetingNumber,
+        className: _activeClassName,
+        trainerName: _activeTrainerName,
+        scheduledStartTime: _activeScheduledStartTime,
       );
       return;
     }
@@ -80,12 +95,21 @@ class ZoomMeetingGetxController extends GetxController {
       if (!_presenceOpen) return;
       _presenceOpen = false;
       status.value = 'Left meeting';
+      final reason = eventName == 'meeting_failed'
+          ? 'failed'
+          : (eventName == 'meeting_ended' ? 'meeting_ended' : 'completed');
       await Get.find<MotivationController>().classPresenceLeave(
         slotId: slotId,
         meetingNumber: _activeMeetingNumber,
+        className: _activeClassName,
+        trainerName: _activeTrainerName,
+        exitReason: reason,
       );
       _activeSlotId = null;
       _activeMeetingNumber = null;
+      _activeClassName = null;
+      _activeTrainerName = null;
+      _activeScheduledStartTime = null;
     }
   }
 

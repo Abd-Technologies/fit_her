@@ -617,11 +617,39 @@ class HelpingWidgets {
         }
         final link = slot.trainerLink ?? '';
         if (link.isEmpty) return;
+
+        final isTrial = _isFreeTrialUser(homeController);
+        final userTier = isTrial ? 'free_trial' : 'paid';
+
+        // Fire workout_join_clicked analytics
+        await AnalyticsHelper.trackWorkoutJoinClicked(
+          slotId: slot.id.toString(),
+          className: slot.type,
+          trainerName: slot.trainerName,
+          userTier: userTier,
+          linkType: link.contains('https') ? 'https_url' : 'zoom_native',
+        );
+
         try {
           if (link.contains('https')) {
+            // For web links, record join presence right away since Zoom SDK won't fire callbacks
+            if (Get.isRegistered<MotivationController>()) {
+              await Get.find<MotivationController>().classPresenceJoin(
+                slotId: slot.id.toString(),
+                className: slot.type,
+                trainerName: slot.trainerName,
+                scheduledStartTime: slot.start,
+              );
+            }
             await launchUrl(Uri.parse(link));
           } else {
-            await startMeeting(link, slot.id.toString());
+            await startMeeting(
+              link,
+              slot.id.toString(),
+              className: slot.type,
+              trainerName: slot.trainerName,
+              scheduledStartTime: slot.start,
+            );
           }
           homeController.sharedPreferences.setBool(Constants.giveReview, true);
         } catch (_) {
@@ -751,8 +779,11 @@ class HelpingWidgets {
 
   static startMeeting(
     String meetingNumber,
-    String slotId,
-  ) async {
+    String slotId, {
+    String? className,
+    String? trainerName,
+    String? scheduledStartTime,
+  }) async {
     final authController = Get.find<AuthController>();
     final homeController = Get.find<HomeController>();
     final displayName = _buildMeetingDisplayName(
@@ -760,8 +791,14 @@ class HelpingWidgets {
       homeController: homeController,
     );
 
-    var success = await Get.find<ZoomMeetingGetxController>()
-        .joinMeeting(meetingNumber, displayName, slotId: slotId);
+    var success = await Get.find<ZoomMeetingGetxController>().joinMeeting(
+      meetingNumber,
+      displayName,
+      slotId: slotId,
+      className: className,
+      trainerName: trainerName,
+      scheduledStartTime: scheduledStartTime,
+    );
     if (success) {
       Future.delayed(Duration(minutes: 5), () {
         Get.bottomSheet(
@@ -780,21 +817,15 @@ class HelpingWidgets {
         ? loginUser!.fullName.trim()
         : 'User';
 
-    final tags = <String>[];
-    final goal = loginUser?.mainGoal?.trim();
-    final hasFreeTrial = homeController.userHomeData?.userAllPlans.any(
-          (plan) => plan.title.trim().toLowerCase() == 'free trial',
-        ) ??
-        false;
+    final isFree = _isFreeTrialUser(homeController);
+    final tierTag = isFree ? 'Free' : 'Paid';
 
-    if (hasFreeTrial) {
-      tags.add('Free Trial');
-    }
+    final tags = <String>[tierTag];
+    final goal = loginUser?.mainGoal?.trim();
     if (goal != null && goal.isNotEmpty) {
       tags.add(goal);
     }
 
-    if (tags.isEmpty) return baseName;
     return '$baseName (${tags.join(', ')})';
   }
 
