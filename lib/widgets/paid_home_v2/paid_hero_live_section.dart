@@ -2,10 +2,13 @@ import 'dart:async';
 import 'dart:math' show max;
 
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../data/controllers/motivation_controller/motivation_controller.dart';
 import '../../data/models/home_dashboard/home_dashboard_model.dart';
+import '../../helper/analytics_helper.dart';
 import '../../utils/app_clock.dart';
 import '../../utils/slot_input_builder.dart'
     show parseSlotWallClock, minutesUntilStart;
@@ -613,11 +616,34 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
         final link = l.trainerLink ?? '';
         final id = l.slotId;
         if (link.isEmpty || id == null) return;
+
+        await AnalyticsHelper.trackWorkoutJoinClicked(
+          slotId: id.toString(),
+          className: l.type,
+          trainerName: l.trainerName,
+          userTier: 'paid',
+          linkType: link.contains('https') ? 'https_url' : 'zoom_native',
+        );
+
         try {
           if (link.contains('https')) {
+            if (Get.isRegistered<MotivationController>()) {
+              await Get.find<MotivationController>().classPresenceJoin(
+                slotId: id.toString(),
+                className: l.type,
+                trainerName: l.trainerName,
+                scheduledStartTime: l.start,
+              );
+            }
             await launchUrl(Uri.parse(link));
           } else {
-            await HelpingWidgets.startMeeting(link, id.toString());
+            await HelpingWidgets.startMeeting(
+              link,
+              id.toString(),
+              className: l.type,
+              trainerName: l.trainerName,
+              scheduledStartTime: l.start,
+            );
           }
         } catch (_) {
           HelpingWidgets.showError('Could not start the session. Please try again.');

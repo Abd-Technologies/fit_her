@@ -432,4 +432,91 @@ class AnalyticsHelper {
       reason: reason,
     );
   }
+
+  // ─── Workout Class & Attendance Analytics ──────────────────────────
+
+  /// User joined a live workout class
+  static Future<void> trackWorkoutClassJoined({
+    required String slotId,
+    String? className,
+    String? trainerName,
+    required String userTier,
+    String? scheduledStartTime,
+    int? delayFromScheduleMinutes,
+    String? source,
+  }) async {
+    await _analyticsService.logWorkoutClassJoined(
+      slotId: slotId,
+      className: className,
+      trainerName: trainerName,
+      userTier: userTier,
+      scheduledStartTime: scheduledStartTime,
+      delayFromScheduleMinutes: delayFromScheduleMinutes,
+      source: source,
+    );
+  }
+
+  /// User left a live workout class
+  static Future<void> trackWorkoutClassLeft({
+    required String slotId,
+    String? className,
+    String? trainerName,
+    required String userTier,
+    int? durationMinutes,
+    int? durationSeconds,
+    String? exitReason,
+  }) async {
+    await _analyticsService.logWorkoutClassLeft(
+      slotId: slotId,
+      className: className,
+      trainerName: trainerName,
+      userTier: userTier,
+      durationMinutes: durationMinutes,
+      durationSeconds: durationSeconds,
+      exitReason: exitReason,
+    );
+  }
+
+  /// User viewed workout schedule timeline
+  static Future<void> trackWorkoutScheduleViewed({
+    String? planId,
+    required String userTier,
+    String? dayOfWeek,
+  }) async {
+    await _analyticsService.logWorkoutScheduleViewed(
+      planId: planId,
+      userTier: userTier,
+      dayOfWeek: dayOfWeek,
+    );
+  }
+
+  /// User tapped a day in workout schedule day strip
+  static Future<void> trackWorkoutDaySelected({
+    required String selectedDate,
+    required String dayName,
+    required bool isToday,
+  }) async {
+    await _analyticsService.logWorkoutDaySelected(
+      selectedDate: selectedDate,
+      dayName: dayName,
+      isToday: isToday,
+    );
+  }
+
+  /// User tapped Join button on workout schedule
+  static Future<void> trackWorkoutJoinClicked({
+    required String slotId,
+    String? className,
+    String? trainerName,
+    required String userTier,
+    String? linkType,
+  }) async {
+    await _analyticsService.logWorkoutJoinClicked(
+      slotId: slotId,
+      className: className,
+      trainerName: trainerName,
+      userTier: userTier,
+      linkType: linkType,
+    );
+  }
 }

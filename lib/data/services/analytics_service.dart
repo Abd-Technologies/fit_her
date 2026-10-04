@@ -670,4 +670,94 @@ class AnalyticsService extends GetxService {
       if (reason != null) 'reason': reason,
     });
   }
+
+  // ─── Workout Class & Attendance Analytics ──────────────────────────
+
+  /// Fired when a user enters a live class session.
+  Future<void> logWorkoutClassJoined({
+    required String slotId,
+    String? className,
+    String? trainerName,
+    required String userTier, // 'free_trial' | 'paid' | 'none'
+    String? scheduledStartTime,
+    int? delayFromScheduleMinutes,
+    String? source,
+  }) async {
+    await _mixpanel?.track('workout_class_joined', properties: {
+      'slot_id': slotId,
+      if (className != null) 'class_name': className,
+      if (trainerName != null) 'trainer_name': trainerName,
+      'user_tier': userTier,
+      if (scheduledStartTime != null) 'scheduled_start_time': scheduledStartTime,
+      if (delayFromScheduleMinutes != null)
+        'delay_from_schedule_minutes': delayFromScheduleMinutes,
+      'source': source ?? 'zoom_native',
+      'joined_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  /// Fired when a user leaves or finishes a live class session.
+  Future<void> logWorkoutClassLeft({
+    required String slotId,
+    String? className,
+    String? trainerName,
+    required String userTier,
+    int? durationMinutes,
+    int? durationSeconds,
+    String? exitReason, // 'completed' | 'dropped_early' | 'meeting_ended' | 'failed'
+  }) async {
+    await _mixpanel?.track('workout_class_left', properties: {
+      'slot_id': slotId,
+      if (className != null) 'class_name': className,
+      if (trainerName != null) 'trainer_name': trainerName,
+      'user_tier': userTier,
+      if (durationMinutes != null) 'duration_minutes': durationMinutes,
+      if (durationSeconds != null) 'duration_seconds': durationSeconds,
+      if (exitReason != null) 'exit_reason': exitReason,
+      'left_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  /// Fired when viewing the workout timeline / schedule screen.
+  Future<void> logWorkoutScheduleViewed({
+    String? planId,
+    required String userTier,
+    String? dayOfWeek,
+  }) async {
+    await _mixpanel?.track('workout_schedule_viewed', properties: {
+      if (planId != null) 'plan_id': planId,
+      'user_tier': userTier,
+      if (dayOfWeek != null) 'day_of_week': dayOfWeek,
+    });
+  }
+
+  /// Fired when selecting a day from the workout day strip.
+  Future<void> logWorkoutDaySelected({
+    required String selectedDate,
+    required String dayName,
+    required bool isToday,
+  }) async {
+    await _mixpanel?.track('workout_day_selected', properties: {
+      'selected_date': selectedDate,
+      'day_name': dayName,
+      'is_today': isToday,
+    });
+  }
+
+  /// Fired when tapping Join / Join Now on a workout slot.
+  Future<void> logWorkoutJoinClicked({
+    required String slotId,
+    String? className,
+    String? trainerName,
+    required String userTier,
+    String? linkType, // 'zoom_native' | 'https_url'
+  }) async {
+    await _mixpanel?.track('workout_join_clicked', properties: {
+      'slot_id': slotId,
+      if (className != null) 'class_name': className,
+      if (trainerName != null) 'trainer_name': trainerName,
+      'user_tier': userTier,
+      if (linkType != null) 'link_type': linkType,
+    });
+  }
 }

@@ -1,4 +1,5 @@
 import 'package:get/get.dart';
+import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../helper/analytics_helper.dart';
@@ -99,10 +100,44 @@ class MotivationController extends GetxController implements GetxService {
     }
   }
 
+  DateTime? _classJoinedAt;
+
   Future<void> classPresenceJoin({
     required String slotId,
     String? meetingNumber,
+    String? className,
+    String? trainerName,
+    String? scheduledStartTime,
   }) async {
+    _classJoinedAt = DateTime.now();
+
+    final homeController =
+        Get.isRegistered<HomeController>() ? Get.find<HomeController>() : null;
+    final isTrial = homeController?.isFreeTrialUser.value ?? false;
+    final userTier = isTrial ? 'free_trial' : 'paid';
+
+    int? delayMinutes;
+    if (scheduledStartTime != null && scheduledStartTime.isNotEmpty) {
+      try {
+        final now = DateTime.now();
+        final parsed = DateFormat('h:mm a').parse(scheduledStartTime.trim());
+        final scheduledToday =
+            DateTime(now.year, now.month, now.day, parsed.hour, parsed.minute);
+        delayMinutes = now.difference(scheduledToday).inMinutes;
+      } catch (_) {}
+    }
+
+    // Fire Mixpanel event for class join
+    await AnalyticsHelper.trackWorkoutClassJoined(
+      slotId: slotId,
+      className: className,
+      trainerName: trainerName,
+      userTier: userTier,
+      scheduledStartTime: scheduledStartTime,
+      delayFromScheduleMinutes: delayMinutes,
+      source: meetingNumber != null ? 'zoom_native' : 'https_url',
+    );
+
     final accessToken =
         sharedPreferences.getString(Constants.accessToken) ?? "";
     if (accessToken.isEmpty) return;
@@ -125,7 +160,36 @@ class MotivationController extends GetxController implements GetxService {
   Future<void> classPresenceLeave({
     required String slotId,
     String? meetingNumber,
+    String? className,
+    String? trainerName,
+    String? exitReason,
   }) async {
+    final now = DateTime.now();
+    int? durationMinutes;
+    int? durationSeconds;
+
+    if (_classJoinedAt != null) {
+      durationSeconds = now.difference(_classJoinedAt!).inSeconds;
+      durationMinutes = (durationSeconds / 60).round();
+      _classJoinedAt = null;
+    }
+
+    final homeController =
+        Get.isRegistered<HomeController>() ? Get.find<HomeController>() : null;
+    final isTrial = homeController?.isFreeTrialUser.value ?? false;
+    final userTier = isTrial ? 'free_trial' : 'paid';
+
+    // Fire Mixpanel event for class leave with duration
+    await AnalyticsHelper.trackWorkoutClassLeft(
+      slotId: slotId,
+      className: className,
+      trainerName: trainerName,
+      userTier: userTier,
+      durationMinutes: durationMinutes,
+      durationSeconds: durationSeconds,
+      exitReason: exitReason ?? 'completed',
+    );
+
     final accessToken =
         sharedPreferences.getString(Constants.accessToken) ?? "";
     if (accessToken.isEmpty) return;
