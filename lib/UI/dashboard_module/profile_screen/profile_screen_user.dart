@@ -21,6 +21,8 @@ import 'package:fitness_zone_2/data/controllers/paid_home_controller/paid_home_c
 import 'package:fitness_zone_2/data/services/cycle_engine.dart';
 import 'package:fitness_zone_2/values/constants.dart';
 import 'package:fitness_zone_2/widgets/new_home/phase_theme.dart';
+import '../../support/support_api.dart';
+import '../../../widgets/logout_sheet.dart';
 
 /// Profile screen — rebuilt to match `new screens/Profile_Final_3Screens.html`
 /// V1 design (mint hero with avatar + day/phase chip, overlapping stats
@@ -131,24 +133,7 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
   // ─── API-touching helpers (UNCHANGED — do not modify) ──────────────────
 
   void _showLogoutDialog(BuildContext context, TextTheme textTheme) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text("Log Out", style: textTheme.headlineSmall),
-        content: Text("Are you sure you want to logout?",
-            style: textTheme.bodyMedium),
-        actions: [
-          TextButton(
-            onPressed: () => Get.back(),
-            child: Text("Cancel", style: textTheme.bodyMedium),
-          ),
-          TextButton(
-            onPressed: () => authController.logout(),
-            child: Text("Logout", style: textTheme.bodyMedium),
-          ),
-        ],
-      ),
-    );
+    LogoutSheet.show();
   }
 
   void _showDeleteDialog() {
@@ -1334,7 +1319,11 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
       _MenuItem(
         icon: Icons.report_problem_outlined,
         label: 'Report an issue',
-        onTap: () => Get.to(() => const ReportIssueScreen()),
+        trailing: const SupportUnreadBadge(),
+        onTap: () async {
+          await Get.to(() => const ReportIssueScreen());
+          SupportApi.refreshUnread();
+        },
       ),
       _MenuItem(
         icon: Icons.help_outline,
@@ -1389,6 +1378,7 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
                 ),
               ),
             ),
+            if (item.trailing != null) item.trailing!,
             const Icon(Icons.chevron_right, size: 14, color: Color(0xFFC8DEC4)),
           ],
         ),
@@ -2078,10 +2068,12 @@ class _MenuItem {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final Widget? trailing;
   const _MenuItem({
     required this.icon,
     required this.label,
     required this.onTap,
+    this.trailing,
   });
 }
 

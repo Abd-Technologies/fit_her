@@ -132,6 +132,22 @@ class PaidHomeController extends GetxController {
   /// Logs a water intake for today, then refetches the dashboard so
   /// `hydration.consumedMl` / `remainingMl` reflect the new total.
   /// Returns true on success, false on any failure.
+  /// Undo her last water tap (home card "Undo").
+  Future<bool> undoLastWater() async {
+    if (isLoggingWater.value) return false;
+    isLoggingWater.value = true;
+    try {
+      final ok = await homeRepo.undoLastWater();
+      if (ok) await loadDashboard();
+      return ok;
+    } catch (e) {
+      debugPrint('[PaidHomeController.undoLastWater] $e');
+      return false;
+    } finally {
+      isLoggingWater.value = false;
+    }
+  }
+
   Future<bool> logWater(int amountMl) async {
     if (isLoggingWater.value) return false;
     isLoggingWater.value = true;

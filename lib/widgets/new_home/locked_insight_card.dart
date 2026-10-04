@@ -4,7 +4,7 @@ import 'package:get/get.dart';
 import '../../data/controllers/auth_controller/auth_controller.dart';
 import 'trial_cta_card.dart' show showLockedFeatureDialog;
 
-/// FitHer AI insight teaser on the unpaid home.
+/// Luna by FitHer insight teaser on the unpaid home.
 /// • Pre-activation: padlocked label, blurred preview, "Unlock insight →".
 /// • Post-activation: clean label, full-opacity insight, no CTA tail.
 ///   Copy is the same sample phrasing so users feel they got the real
@@ -13,7 +13,7 @@ class LockedInsightCard extends StatelessWidget {
   const LockedInsightCard({Key? key}) : super(key: key);
 
   static const _kBody =
-      'Recovery is 40% faster in your follicular phase — push today, '
+      'Recovery is 40% faster in your follicular phase. Push today, '
       'rest smart this weekend for…';
 
   @override
@@ -27,7 +27,7 @@ class LockedInsightCard extends StatelessWidget {
         // once unlocked this is just a normal insight card, no popup.
         onTap: activated
             ? null
-            : () => showLockedFeatureDialog('FitHer AI Insight'),
+            : () => showLockedFeatureDialog('Luna insight'),
         child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
@@ -41,8 +41,8 @@ class LockedInsightCard extends StatelessWidget {
           children: [
             Text(
               activated
-                  ? "FITHER AI · TODAY'S INSIGHT"
-                  : "🔒 FITHER AI · TODAY'S INSIGHT",
+                  ? "LUNA BY FITHER · TODAY'S INSIGHT"
+                  : "🔒 LUNA BY FITHER · TODAY'S INSIGHT",
               style: const TextStyle(
                 fontFamily: 'Poppins',
                 fontSize: 9,

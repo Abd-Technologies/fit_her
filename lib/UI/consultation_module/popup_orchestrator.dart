@@ -16,7 +16,7 @@ import 'popups/inactivity_reminder_sheet.dart';
 import 'popups/medical_concern_sheet.dart';
 import 'popups/photo_privacy_notice_sheet.dart';
 import 'popups/plan_delayed_sheet.dart';
-import 'popups/pre_consultation_form_sheet.dart';
+import '../pre_consultation/pre_consultation_form_screen.dart';
 import 'popups/progress_submission_sheet.dart';
 import 'popups/renew_plan_sheet.dart';
 
@@ -335,8 +335,13 @@ class _PendingPopupOrchestratorState extends State<PendingPopupOrchestrator> {
         break;
 
       case 'POPUP_PRE_CONSULTATION_FORM':
+        // One pre-consultation form (full screen, signup style). Only the
+        // missing questions; "Later" allowed twice, then required.
         final planType = _readStr('planType') ?? 'diet';
-        await PreConsultationFormSheet.show(planType: planType);
+        await PreConsultationFormScreen.open(
+          planType: planType,
+          canLater: p.dismissCount < 2,
+        );
         break;
 
       case 'POPUP_DAY7_REVIEW':

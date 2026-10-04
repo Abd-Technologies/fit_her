@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../data/controllers/paid_home_controller/paid_home_controller.dart';
 import '../../data/models/home_dashboard/home_dashboard_model.dart';
 import '../new_home/phase_theme.dart';
+import 'quick_amount_sheet.dart';
 
 /// Water card: progress display + two tap-to-log buttons.
 /// Designed to fill its parent height (works inside an IntrinsicHeight Row).
@@ -12,7 +15,14 @@ import '../new_home/phase_theme.dart';
 class PaidWaterCard extends StatefulWidget {
   final HomeDashboardModel dashboard;
 
-  const PaidWaterCard({Key? key, required this.dashboard}) : super(key: key);
+  /// Inside the "Today's insights" box: lighter border, no shadow.
+  final bool embedded;
+
+  /// Opened from a tile in the box: keep the buttons open even after
+  /// the goal is reached.
+  final bool alwaysShowButtons;
+
+  const PaidWaterCard({Key? key, required this.dashboard, this.embedded = false, this.alwaysShowButtons = false}) : super(key: key);
 
   @override
   State<PaidWaterCard> createState() => _PaidWaterCardState();
@@ -21,8 +31,85 @@ class PaidWaterCard extends StatefulWidget {
 class _PaidWaterCardState extends State<PaidWaterCard> {
   final PaidHomeController _controller = Get.find<PaidHomeController>();
 
-  Future<void> _onTap(int amountMl) async {
-    if (_controller.isLoggingWater.value) return;
+  /// The celebration shows once a day, even if she undoes and re-crosses.
+  static String? _celebratedOn;
+
+  /// Last tap, shown as "+500 ml added · Undo" for 4 seconds.
+  int? _undoMl;
+  Timer? _undoTimer;
+
+  /// After the goal the buttons fold away; "Add more ›" opens them again
+  /// for a moment.
+  bool _editing = false;
+  Timer? _foldTimer;
+
+  void _openEdit() {
+    _foldTimer?.cancel();
+    setState(() => _editing = true);
+    _foldTimer = Timer(const Duration(seconds: 6), () {
+      if (mounted) setState(() => _editing = false);
+    });
+  }
+
+  void _foldSoon() {
+    _foldTimer?.cancel();
+    _foldTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted) setState(() => _editing = false);
+    });
+  }
+
+  /// The › in the header: any amount, 50 ml to 3 L.
+  void _openCustom(Color accent) {
+    QuickAmountSheet.show(
+      context,
+      QuickAmountSheet(
+        title: 'Add water',
+        subtitle: 'Pick an amount or set your own',
+        presets: const [100, 250, 330, 750, 1000],
+        initial: 250,
+        min: 50,
+        max: 3000,
+        step: 50,
+        buttonLabel: 'Add',
+        accent: accent,
+        format: (v) => v >= 1000
+            ? '${(v / 1000).toStringAsFixed(v % 1000 == 0 ? 0 : 2).replaceFirst(RegExp(r'0$'), '')} L'
+            : '${v.round()} ml',
+        onSave: (v) => _onTap(v.round()),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _undoTimer?.cancel();
+    _foldTimer?.cancel();
+    super.dispose();
+  }
+
+  void _showUndo(int ml) {
+    _undoTimer?.cancel();
+    setState(() => _undoMl = ml);
+    _undoTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _undoMl = null);
+    });
+  }
+
+  Future<void> _undo() async {
+    _undoTimer?.cancel();
+    setState(() => _undoMl = null);
+    final ok = await _controller.undoLastWater();
+    if (!mounted || ok) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Couldn't undo. Please try again."),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<bool> _onTap(int amountMl) async {
+    if (_controller.isLoggingWater.value) return false;
 
     // Capture pre-tap values to detect the goal-reached transition.
     final prevConsumed = widget.dashboard.hydration?.consumedMl ?? 0;
@@ -30,7 +117,7 @@ class _PaidWaterCardState extends State<PaidWaterCard> {
     final wasUnderGoal = target > 0 && prevConsumed < target;
 
     final success = await _controller.logWater(amountMl);
-    if (!mounted) return;
+    if (!mounted) return success;
 
     if (!success) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -39,17 +126,23 @@ class _PaidWaterCardState extends State<PaidWaterCard> {
           duration: Duration(seconds: 2),
         ),
       );
-      return;
+      return false;
     }
 
-    // Show celebration popup when goal is reached for the first time this tap.
+    _showUndo(amountMl);
+    if (_editing) _foldSoon();
+
+    // Celebrate the first time she reaches the goal today.
     if (wasUnderGoal) {
       final newConsumed =
           _controller.dashboard.value?.hydration?.consumedMl ?? 0;
-      if (newConsumed >= target) {
+      final today = DateTime.now().toIso8601String().substring(0, 10);
+      if (newConsumed >= target && _celebratedOn != today) {
+        _celebratedOn = today;
         _showGoalReachedDialog(context);
       }
     }
+    return true;
   }
 
   void _showGoalReachedDialog(BuildContext ctx) {
@@ -91,8 +184,8 @@ class _PaidWaterCardState extends State<PaidWaterCard> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFD8EDD4), width: 1),
-        boxShadow: [
+        border: Border.all(color: widget.embedded ? const Color(0xFFE3EFE0) : const Color(0xFFD8EDD4), width: 1),
+        boxShadow: widget.embedded ? null : [
           BoxShadow(
             color: const Color(0xFF163220).withOpacity(0.05),
             offset: const Offset(0, 2),
@@ -106,13 +199,17 @@ class _PaidWaterCardState extends State<PaidWaterCard> {
         // letting Spacer push the action buttons to the bottom.
         mainAxisSize: MainAxisSize.max,
         children: [
-          _buildHeaderRow(),
+          _buildHeaderRow(theme),
           const SizedBox(height: 8),
           _buildAmountLine(consumedMl, targetMl, hasTarget),
           if (hasTarget) const SizedBox(height: 6),
           if (hasTarget) _buildProgressBar(fillFraction, goalReached),
-          if (goalReached) const SizedBox(height: 5),
-          if (goalReached)
+          // Goal line, or for 4 seconds after a tap the Undo pill in the
+          // same spot, so the card never changes size.
+          if (goalReached || _undoMl != null) const SizedBox(height: 5),
+          if (_undoMl != null)
+            _UndoPill(ml: _undoMl!, onUndo: _undo)
+          else if (goalReached)
             Text(
               overGoal
                   ? 'Goal reached! ${_formatL(consumedMl ?? 0)} L today'
@@ -126,13 +223,23 @@ class _PaidWaterCardState extends State<PaidWaterCard> {
           const SizedBox(height: 8),
           // Spacer pushes buttons to the bottom so both cards align.
           const Spacer(),
-          _buildButtonRow(theme),
+          // After the goal: one small "✓ Done · Add more ›" line instead
+          // of the buttons, so the card gets shorter.
+          if (goalReached && !_editing && !widget.alwaysShowButtons)
+            CardDoneLine(
+              done: '✓ Done',
+              action: 'Add more ›',
+              color: theme.accent,
+              onTap: _openEdit,
+            )
+          else
+            _buildButtonRow(theme),
         ],
       ),
     );
   }
 
-  Widget _buildHeaderRow() {
+  Widget _buildHeaderRow(PhaseTheme theme) {
     return Row(
       children: [
         Container(
@@ -153,6 +260,17 @@ class _PaidWaterCardState extends State<PaidWaterCard> {
             fontSize: 11,
             fontWeight: FontWeight.w700,
             color: Color(0xFF163220),
+          ),
+        ),
+        const Spacer(),
+        // › opens "Add water" for a custom amount.
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _openCustom(theme.accent),
+          child: Padding(
+            padding: const EdgeInsets.only(left: 12),
+            child: Icon(Icons.chevron_right_rounded,
+                size: 14, color: const Color(0xFF5B9BD5).withOpacity(0.55)),
           ),
         ),
       ],
@@ -216,10 +334,13 @@ class _PaidWaterCardState extends State<PaidWaterCard> {
           child: FractionallySizedBox(
             widthFactor: fraction,
             heightFactor: 1.0,
-            child: const DecoratedBox(
+            // Blue while filling, green once the goal is reached.
+            child: DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Color(0xFF5B9BD5), Color(0xFF9CC7EE)],
+                  colors: goalReached
+                      ? const [Color(0xFF4AA877), Color(0xFF8FD6AE)]
+                      : const [Color(0xFF5B9BD5), Color(0xFF9CC7EE)],
                 ),
               ),
             ),
@@ -269,6 +390,58 @@ class _PaidWaterCardState extends State<PaidWaterCard> {
       return s.substring(0, s.length - 2);
     }
     return s;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// "+500 ml added · Undo" — shows for 4 seconds after each tap
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _UndoPill extends StatelessWidget {
+  final int ml;
+  final VoidCallback onUndo;
+  const _UndoPill({required this.ml, required this.onUndo});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFF163220),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              '+$ml ml added',
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 9,
+                fontWeight: FontWeight.w500,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onUndo,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Text(
+                'Undo',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF9EE2BF),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

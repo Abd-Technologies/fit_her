@@ -21,6 +21,7 @@ import '../my_daily_meal/my_daily_meal.dart';
 import 'Imporatant_Screen.dart';
 import 'Success_Stories.dart';
 import 'about_us_screen.dart';
+import '../../../widgets/logout_sheet.dart';
 
 class ProfileScreen extends StatelessWidget {
   ProfileScreen({Key? key, this.fromWelcomeScreen = false}) : super(key: key);
@@ -156,40 +157,7 @@ class ProfileScreen extends StatelessWidget {
                 fromWelcomeScreen
                     ? const SizedBox.shrink()
                     : rowWidget(MyImgs.logOut, "Log Out", () {
-                        showDialog(
-                            context: context,
-                            builder: (BuildContext context) {
-                              return AlertDialog(
-                                title: Text(
-                                  "Log Out",
-                                  style: textTheme.headlineSmall,
-                                ),
-                                content: Text(
-                                  "Are you sure you want to logout?",
-                                  style: textTheme.bodyMedium,
-                                ),
-                                actions: [
-                                  TextButton(
-                                      onPressed: () {
-                                        Get.back();
-                                      },
-                                      child: Text(
-                                        "Cancel",
-                                        style: textTheme.bodyMedium,
-                                      )),
-                                  TextButton(
-                                      onPressed: () async {
-                                        Get.find<AuthController>().logout();
-
-
-                                      },
-                                      child: Text(
-                                        "Logout",
-                                        style: textTheme.bodyMedium,
-                                      )),
-                                ],
-                              );
-                            });
+                        LogoutSheet.show();
                       }),
                 SizedBox(
                   height: 10.h,

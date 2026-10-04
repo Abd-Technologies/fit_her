@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -16,7 +18,10 @@ import '../new_home/phase_theme.dart';
 class PaidFeelSelector extends StatefulWidget {
   final HomeDashboardModel dashboard;
 
-  const PaidFeelSelector({Key? key, required this.dashboard})
+  /// Inside the "Today's insights" box: lighter border, no shadow.
+  final bool embedded;
+
+  const PaidFeelSelector({Key? key, required this.dashboard, this.embedded = false})
       : super(key: key);
 
   @override
@@ -45,6 +50,25 @@ class _PaidFeelSelectorState extends State<PaidFeelSelector> {
   /// AND on failure — after either, the dashboard is the source of truth.
   int? _optimisticIndex;
 
+  /// The reply tip shows for 4 seconds after she picks a feeling, then
+  /// folds away. Tapping her selected feeling again shows it again.
+  bool _tipVisible = false;
+  Timer? _tipTimer;
+
+  void _flashTip() {
+    _tipTimer?.cancel();
+    setState(() => _tipVisible = true);
+    _tipTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _tipVisible = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _tipTimer?.cancel();
+    super.dispose();
+  }
+
   /// Maps backend moodLevel (1..5, nullable) to UI cell index (0..4, nullable).
   /// Invalid values return null so no cell is pre-selected.
   int? _dashboardIndex() {
@@ -60,8 +84,11 @@ class _PaidFeelSelectorState extends State<PaidFeelSelector> {
     if (_controller.isSavingMood.value) return;
 
     final previous = _effectiveIndex();
-    // No-op if tapping the already-selected cell.
-    if (previous == cellIndex) return;
+    // Tapping the selected feeling again just shows its tip again.
+    if (previous == cellIndex) {
+      _flashTip();
+      return;
+    }
 
     // Optimistic: paint the new selection immediately.
     setState(() => _optimisticIndex = cellIndex);
@@ -72,6 +99,8 @@ class _PaidFeelSelectorState extends State<PaidFeelSelector> {
     // Clear the optimistic override either way — the dashboard (refreshed on
     // success, unchanged on failure) becomes the source of truth again.
     setState(() => _optimisticIndex = null);
+
+    if (success) _flashTip();
 
     if (!success) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -97,19 +126,23 @@ class _PaidFeelSelectorState extends State<PaidFeelSelector> {
         ? null
         : _MoodReplies.forPhase(phaseKey, selectedIndex);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFD8EDD4), width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF163220).withOpacity(0.05),
-            offset: const Offset(0, 2),
-            blurRadius: 10,
-          ),
-        ],
-      ),
+      padding: widget.embedded
+          ? EdgeInsets.zero
+          : const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: widget.embedded
+          ? null
+          : BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFD8EDD4), width: 1),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF163220).withOpacity(0.05),
+                  offset: const Offset(0, 2),
+                  blurRadius: 10,
+                ),
+              ],
+            ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -192,9 +225,9 @@ class _PaidFeelSelectorState extends State<PaidFeelSelector> {
           // One line reply to the mood she picked, tuned to her cycle
           // phase. Fixed copy, no AI call.
           AnimatedSize(
-            duration: const Duration(milliseconds: 200),
+            duration: const Duration(milliseconds: 300),
             curve: Curves.easeOut,
-            child: reply == null
+            child: (reply == null || !_tipVisible)
                 ? const SizedBox(width: double.infinity)
                 : Container(
                     width: double.infinity,

@@ -1,21 +1,30 @@
-// Report an Issue — lets a user describe a technical / app-service problem and
-// optionally attach a screenshot. It posts to partner_backend
-// (POST /users/app-issue), which relays it to the CRM where it lands in the
-// ADMIN support queue (not the sales reps).
+// Report an issue: pick a topic, describe it, add a screenshot, send.
+// Saved as a support ticket on partner_backend (POST /users/app-issue), which
+// Admin and the CRM can answer. Her tickets and replies show under
+// "Your reports" at the bottom.
 //
-// Navigate to it from anywhere with:
 //   Get.to(() => const ReportIssueScreen());
 
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart' hide MultipartFile, FormData, Response;
-import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../values/constants.dart';
+import 'support_api.dart';
+import 'support_ticket_screen.dart';
+
+const _bg = Color(0xFFF9FCF7);
+const _ink = Color(0xFF1A3A22);
+const _muted = Color(0xFF7A8C78);
+const _line = Color(0xFFE2EFDC);
+const _green = Color(0xFF6DC55A);
+const _mintBg = Color(0xFFE8F4E0);
+const _sendOn = Color(0xFF6DC55A);
+const _sendOff = Color(0xFFBFE3B5);
+
+TextStyle _t(double size, FontWeight w, Color c) =>
+    TextStyle(fontFamily: 'Poppins', fontSize: size, fontWeight: w, color: c);
 
 class ReportIssueScreen extends StatefulWidget {
   const ReportIssueScreen({super.key});
@@ -25,28 +34,23 @@ class ReportIssueScreen extends StatefulWidget {
 }
 
 class _ReportIssueScreenState extends State<ReportIssueScreen> {
-  static const List<String> _categories = <String>[
-    "App not working",
-    "Payment",
-    "Diet / Plan",
-    "Class / Session",
-    "Other",
-  ];
-
-  // Maps the friendly label to the category code the backend/CRM expects.
-  static const Map<String, String> _categoryCode = <String, String>{
-    "App not working": "APP_ISSUE",
-    "Payment": "PAYMENT",
-    "Diet / Plan": "PLAN",
-    "Class / Session": "CLASS",
-    "Other": "OTHER",
-  };
-
   final TextEditingController _messageCtrl = TextEditingController();
   final ImagePicker _picker = ImagePicker();
-  String _category = _categories.first;
+  String _category = 'APP_ISSUE';
   File? _image;
   bool _submitting = false;
+  SupportTicket? _sent; // set after a successful send (confirmation view)
+  List<SupportTicket> _tickets = const [];
+  bool _loadingTickets = true;
+
+  bool get _canSend => _messageCtrl.text.trim().isNotEmpty && !_submitting;
+
+  @override
+  void initState() {
+    super.initState();
+    _messageCtrl.addListener(() => setState(() {}));
+    _loadTickets();
+  }
 
   @override
   void dispose() {
@@ -54,15 +58,26 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
     super.dispose();
   }
 
+  Future<void> _loadTickets() async {
+    try {
+      final list = await SupportApi.mine();
+      if (!mounted) return;
+      setState(() {
+        _tickets = list;
+        _loadingTickets = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loadingTickets = false);
+    }
+  }
+
   Future<void> _pickImage(ImageSource source) async {
     try {
       final XFile? picked =
           await _picker.pickImage(source: source, imageQuality: 70, maxWidth: 1600);
-      if (picked != null) {
-        setState(() => _image = File(picked.path));
-      }
+      if (picked != null) setState(() => _image = File(picked.path));
     } catch (e) {
-      Get.snackbar("Could not attach image", e.toString(),
+      Get.snackbar('Could not attach image', e.toString(),
           snackPosition: SnackPosition.BOTTOM);
     }
   }
@@ -75,7 +90,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
-              title: const Text("Choose from gallery"),
+              title: Text('Choose from gallery', style: _t(13, FontWeight.w500, _ink)),
               onTap: () {
                 Navigator.pop(context);
                 _pickImage(ImageSource.gallery);
@@ -83,7 +98,7 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text("Take a photo"),
+              title: Text('Take a photo', style: _t(13, FontWeight.w500, _ink)),
               onTap: () {
                 Navigator.pop(context);
                 _pickImage(ImageSource.camera);
@@ -96,162 +111,574 @@ class _ReportIssueScreenState extends State<ReportIssueScreen> {
   }
 
   Future<void> _submit() async {
-    final message = _messageCtrl.text.trim();
-    if (message.isEmpty && _image == null) {
-      Get.snackbar("Nothing to send",
-          "Please describe the issue or attach a screenshot.",
-          snackPosition: SnackPosition.BOTTOM);
-      return;
-    }
-
+    if (!_canSend) return;
+    FocusScope.of(context).unfocus();
     setState(() => _submitting = true);
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString(Constants.accessToken) ?? "";
-
-      final uri = Uri.parse("${Constants.baseUrl}/users/app-issue");
-      final request = http.MultipartRequest("POST", uri);
-      request.headers["accessToken"] = token;
-      request.fields["message"] = message;
-      request.fields["category"] = _categoryCode[_category] ?? "OTHER";
-      if (_image != null) {
-        request.files
-            .add(await http.MultipartFile.fromPath("image", _image!.path));
-      }
-
-      final streamed = await request.send();
-      final resp = await http.Response.fromStream(streamed);
-
-      bool ok = false;
-      try {
-        final decoded = jsonDecode(resp.body);
-        ok = decoded is Map && decoded["status"]?.toString() == "1";
-      } catch (_) {
-        ok = resp.statusCode >= 200 && resp.statusCode < 300;
-      }
-
-      if (ok) {
-        Get.back();
-        Get.snackbar("Issue sent",
-            "Thanks — our team has received your message and will get back to you.",
-            snackPosition: SnackPosition.BOTTOM);
-      } else {
-        // DEBUG: surface the real status + server response so we can see why.
-        final bodyPreview =
-            resp.body.length > 200 ? resp.body.substring(0, 200) : resp.body;
-        // ignore: avoid_print
-        print("[ReportIssue] POST ${uri.toString()} -> ${resp.statusCode}: ${resp.body}");
-        Get.snackbar("Couldn't send (${resp.statusCode})", bodyPreview,
-            snackPosition: SnackPosition.BOTTOM,
-            duration: const Duration(seconds: 8));
-      }
+      final t = await SupportApi.create(
+        category: _category,
+        message: _messageCtrl.text.trim(),
+        image: _image,
+      );
+      if (!mounted) return;
+      setState(() {
+        _sent = t;
+        _submitting = false;
+        _messageCtrl.clear();
+        _image = null;
+      });
+      _loadTickets();
     } catch (e) {
-      Get.snackbar("Couldn't send", e.toString(),
-          snackPosition: SnackPosition.BOTTOM);
-    } finally {
-      if (mounted) setState(() => _submitting = false);
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      Get.snackbar('Could not send', e.toString(), snackPosition: SnackPosition.BOTTOM);
     }
   }
 
+  Future<void> _openTicket(SupportTicket t) async {
+    await Get.to(() => SupportTicketScreen(ticketId: t.id));
+    _loadTickets();
+  }
+
+  // ── UI ────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).primaryColor;
     return Scaffold(
-      appBar: AppBar(title: const Text("Report an Issue")),
+      backgroundColor: _bg,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+        bottom: false,
+        child: Column(
+          children: [
+            _header(),
+            Expanded(child: _sent != null ? _confirmation(_sent!) : _form()),
+            if (_sent == null) _sendBar(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _header() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Row(
+        children: [
+          InkWell(
+            onTap: () => Get.back<void>(),
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(color: _line),
+              ),
+              child: const Icon(Icons.chevron_left_rounded, color: _ink, size: 22),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text('Report an issue', style: _t(17, FontWeight.w700, _ink)),
+        ],
+      ),
+    );
+  }
+
+  Widget _form() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      children: [
+        _helpCard(),
+        const SizedBox(height: 18),
+        Text("What's it about?", style: _t(14, FontWeight.w700, _ink)),
+        const SizedBox(height: 10),
+        _categoryGrid(),
+        const SizedBox(height: 18),
+        Text('Tell us what happened', style: _t(14, FontWeight.w700, _ink)),
+        const SizedBox(height: 10),
+        _messageBox(),
+        const SizedBox(height: 18),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text('Screenshot', style: _t(14, FontWeight.w700, _ink)),
+            const SizedBox(width: 6),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 1),
+              child: Text('optional, but it really helps',
+                  style: _t(11, FontWeight.w400, _muted)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _screenshot(),
+        _reportsSection(),
+      ],
+    );
+  }
+
+  Widget _helpCard() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFF6FBF3), Color(0xFFE8F4E0)],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFC8E8BC)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.headset_mic_outlined, color: _green, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Our support team is here to help',
+                    style: _t(13, FontWeight.w700, _ink)),
+                const SizedBox(height: 2),
+                Text(
+                  "Real people, not sales. We'll notify you in the app and resolve most issues within 3 working days.",
+                  style: _t(11, FontWeight.w400, _muted).copyWith(height: 1.4),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _categoryGrid() {
+    final keys = supportCategories.keys.toList();
+    Widget tile(String k) {
+      final sel = k == _category;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _category = k),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            height: 76,
+            decoration: BoxDecoration(
+              color: sel ? _mintBg : Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: sel ? _green : _line, width: sel ? 1.4 : 1),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: sel ? Colors.white.withOpacity(0.7) : const Color(0xFFF6FBF3),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Icon(supportCategoryIcons[k], size: 17, color: sel ? _green : _ink),
+                ),
+                const SizedBox(height: 6),
+                Text(supportCategoryLabel(k),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _t(11, FontWeight.w600, _ink)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        Row(children: [tile(keys[0]), const SizedBox(width: 8), tile(keys[1]), const SizedBox(width: 8), tile(keys[2])]),
+        const SizedBox(height: 8),
+        Row(children: [tile(keys[3]), const SizedBox(width: 8), tile(keys[4]), const SizedBox(width: 8), tile(keys[5])]),
+      ],
+    );
+  }
+
+  Widget _messageBox() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _line),
+      ),
+      child: Column(
+        children: [
+          TextField(
+            controller: _messageCtrl,
+            maxLines: 5,
+            minLines: 5,
+            maxLength: 1000,
+            style: _t(13, FontWeight.w400, _ink),
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              counterText: '',
+              hintText: 'e.g. The app crashes when I open the Classes tab.',
+              hintStyle: _t(12.5, FontWeight.w400, const Color(0xFFA9B8A6)),
+            ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: Text('The more detail, the faster we can fix it',
+                    style: _t(10, FontWeight.w400, _muted)),
+              ),
+              Text('${_messageCtrl.text.length}/1000',
+                  style: _t(10, FontWeight.w400, _muted)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _screenshot() {
+    if (_image != null) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image.file(_image!, width: 72, height: 96, fit: BoxFit.cover),
+            ),
+            Positioned(
+              top: -8,
+              right: -8,
+              child: GestureDetector(
+                onTap: () => setState(() => _image = null),
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: const BoxDecoration(color: _ink, shape: BoxShape.circle),
+                  child: const Icon(Icons.close_rounded, size: 14, color: Colors.white),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: GestureDetector(
+        onTap: _showImageSourceSheet,
+        child: Container(
+          width: 72,
+          height: 96,
+          decoration: BoxDecoration(
+            color: _mintBg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFC8E8BC)),
+          ),
           child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.add_rounded, color: _green, size: 22),
+              Text('Add', style: _t(11, FontWeight.w600, _green)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _reportsSection() {
+    if (_loadingTickets || _tickets.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 26),
+        Text('Your reports', style: _t(14, FontWeight.w700, _ink)),
+        const SizedBox(height: 10),
+        for (final t in _tickets) ...[
+          SupportTicketTile(ticket: t, onTap: () => _openTicket(t)),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+
+  Widget _sendBar() {
+    return Container(
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: _line)),
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        height: 50,
+        child: ElevatedButton(
+          onPressed: _canSend ? _submit : null,
+          style: ElevatedButton.styleFrom(
+            elevation: 0,
+            backgroundColor: _sendOn,
+            disabledBackgroundColor: _sendOff,
+            foregroundColor: Colors.white,
+            disabledForegroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+          child: _submitting
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : Text(
+                  _messageCtrl.text.trim().isEmpty ? 'Describe the issue to send' : 'Send report',
+                  style: _t(14, FontWeight.w700, Colors.white),
+                ),
+        ),
+      ),
+    );
+  }
+
+  Widget _confirmation(SupportTicket t) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
+      children: [
+        Center(
+          child: Container(
+            width: 80,
+            height: 80,
+            decoration: const BoxDecoration(color: Color(0xFFE8F4E0), shape: BoxShape.circle),
+            alignment: Alignment.center,
+            child: Container(
+              width: 60,
+              height: 60,
+              decoration: const BoxDecoration(color: _green, shape: BoxShape.circle),
+              child: const Icon(Icons.check_rounded, color: Colors.white, size: 32),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text('Report sent', textAlign: TextAlign.center, style: _t(20, FontWeight.w700, _ink)),
+        const SizedBox(height: 6),
+        Text('Thanks for telling us. A real person will look at it.',
+            textAlign: TextAlign.center, style: _t(12.5, FontWeight.w400, _muted)),
+        const SizedBox(height: 20),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: _line),
+          ),
+          child: Column(
+            children: [
+              _kv('Topic', supportCategoryLabel(t.category)),
+              _kv('Status', 'Received'),
+              _kv('Resolved by', supportDay(t.dueAt)),
+              _kv('Promise', 'Within 3 working days', last: true),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF7E6),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFF3DDA8)),
+          ),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                "Tell us what's going wrong with the app or your service. "
-                "Our support team (not sales) will look into it.",
-                style: TextStyle(fontSize: 13, color: Colors.black54),
-              ),
-              const SizedBox(height: 18),
-
-              const Text("Category", style: TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<String>(
-                value: _category,
-                isExpanded: true,
-                decoration: const InputDecoration(border: OutlineInputBorder()),
-                items: _categories
-                    .map((c) => DropdownMenuItem<String>(value: c, child: Text(c)))
-                    .toList(),
-                onChanged: (v) => setState(() => _category = v ?? _category),
-              ),
-              const SizedBox(height: 16),
-
-              const Text("Describe the issue",
-                  style: TextStyle(fontWeight: FontWeight.w600)),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _messageCtrl,
-                maxLines: 5,
-                maxLength: 1000,
-                textInputAction: TextInputAction.newline,
-                decoration: const InputDecoration(
-                  hintText: "e.g. My diet plan isn't loading after I paid…",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 8),
-
-              // Attachment
-              if (_image != null)
-                Stack(
-                  alignment: Alignment.topRight,
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.file(_image!,
-                          height: 160, width: double.infinity, fit: BoxFit.cover),
-                    ),
-                    IconButton(
-                      icon: const CircleAvatar(
-                        backgroundColor: Colors.black54,
-                        radius: 14,
-                        child: Icon(Icons.close, size: 16, color: Colors.white),
-                      ),
-                      onPressed: () => setState(() => _image = null),
-                    ),
-                  ],
-                )
-              else
-                OutlinedButton.icon(
-                  onPressed: _showImageSourceSheet,
-                  icon: const Icon(Icons.attach_file),
-                  label: const Text("Attach a screenshot (optional)"),
-                ),
-
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primary,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
-                  ),
-                  onPressed: _submitting ? null : _submit,
-                  child: _submitting
-                      ? const SizedBox(
-                          height: 22,
-                          width: 22,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Text("Send to support",
-                          style: TextStyle(fontSize: 16, color: Colors.white)),
+              const Icon(Icons.notifications_none_rounded, size: 18, color: Color(0xFF9A7414)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  "We'll notify you in the app as soon as there's an update. The reply will appear under Your reports.",
+                  style: _t(11.5, FontWeight.w400, const Color(0xFF6B5A2E)).copyWith(height: 1.4),
                 ),
               ),
             ],
           ),
         ),
+        const SizedBox(height: 20),
+        SizedBox(
+          height: 48,
+          child: ElevatedButton(
+            onPressed: () => _openTicket(t),
+            style: ElevatedButton.styleFrom(
+              elevation: 0,
+              backgroundColor: _sendOn,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+            child: Text('View my report', style: _t(14, FontWeight.w700, Colors.white)),
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 48,
+          child: OutlinedButton(
+            onPressed: () => setState(() => _sent = null),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: _line),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+            child: Text('Done', style: _t(14, FontWeight.w600, _ink)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _kv(String k, String v, {bool last = false}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      decoration: BoxDecoration(
+        border: last ? null : const Border(bottom: BorderSide(color: _line)),
       ),
+      child: Row(
+        children: [
+          Text(k, style: _t(12, FontWeight.w400, _muted)),
+          const Spacer(),
+          Text(v, style: _t(12.5, FontWeight.w700, _ink)),
+        ],
+      ),
+    );
+  }
+}
+
+/// One row in "Your reports".
+class SupportTicketTile extends StatelessWidget {
+  final SupportTicket ticket;
+  final VoidCallback onTap;
+  const SupportTicketTile({super.key, required this.ticket, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ticket;
+    final hasReply = t.lastReply != null;
+    final String line;
+    if (t.userUnread) {
+      line = 'New reply from support';
+    } else if (t.status == 'resolved') {
+      line = 'Resolved ${supportShortDate(t.resolvedAt)}';
+    } else if (hasReply) {
+      line = 'Support replied';
+    } else {
+      line = "We'll reply by ${supportDay(t.dueAt)}";
+    }
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _line),
+        ),
+        child: Row(
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF6FBF3),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Icon(supportCategoryIcons[t.category] ?? Icons.more_horiz_rounded,
+                      size: 18, color: _ink),
+                ),
+                if (t.userUnread)
+                  Positioned(
+                    top: -3,
+                    right: -3,
+                    child: Container(
+                      width: 11,
+                      height: 11,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE05C5C),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    (t.message ?? '').trim().isEmpty
+                        ? supportCategoryLabel(t.category)
+                        : t.message!.trim(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _t(12.5, FontWeight.w600, _ink),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    line,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.userUnread
+                        ? _t(11, FontWeight.w700, _green)
+                        : _t(11, FontWeight.w400, _muted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            SupportStatusBadge(status: t.status),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class SupportStatusBadge extends StatelessWidget {
+  final String status;
+  const SupportStatusBadge({super.key, required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    late final Color bg, fg;
+    late final String label;
+    switch (status) {
+      case 'resolved':
+        bg = const Color(0xFFE8F4E0);
+        fg = const Color(0xFF3F9B35);
+        label = 'Resolved';
+        break;
+      case 'in_review':
+        bg = const Color(0xFFFFF0DC);
+        fg = const Color(0xFFC07A1E);
+        label = 'In review';
+        break;
+      default:
+        bg = const Color(0xFFF1F5EF);
+        fg = const Color(0xFF5A7258);
+        label = 'Received';
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
+      child: Text(label, style: _t(10, FontWeight.w700, fg)),
     );
   }
 }

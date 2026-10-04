@@ -1,0 +1,1308 @@
+import 'package:flutter/foundation.dart';
+import 'package:get/get.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:io';
+import '../../../values/constants.dart';
+import '../../api_provider/api_provider.dart';
+import '../../models/home_dashboard/home_dashboard_model.dart';
+
+class HomeRepo extends GetxService {
+  ApiProvider apiProvider;
+
+  HomeRepo({
+    required this.apiProvider,
+  });
+
+  Future<Response> getAllCategories({required String accessToken}) async {
+    return await apiProvider.getData(Constants.getAllCategories,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getSubCategories(
+      {required String accessToken, required String catId}) async {
+    return await apiProvider.getData("${Constants.getSubCat}/$catId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getUserPlansDiet(
+      {required String accessToken, required String userId}) async {
+    return await apiProvider.getData("${Constants.getUserDietPlans}/$userId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getClients(
+      {required String accessToken, required String userId}) async {
+    return await apiProvider.getData("${Constants.getClients}/$userId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getAppointments(
+      {required String accessToken, required String userId}) async {
+    return await apiProvider.getData("${Constants.getAppointments}/$userId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getRescheduleAppointments({
+    required String accessToken,
+    required bool reschedule,
+    required String dietitianId,
+  }) async {
+    return await apiProvider.getData(
+        "${Constants.rescheduleAppointments}/$reschedule/$dietitianId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getConsultationStatus({
+    required String accessToken,
+  }) async {
+    return await apiProvider.getData(Constants.getConsultationStatus,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getReschedulePdfStatus({
+    required String accessToken,
+  }) async {
+    return await apiProvider.getData(Constants.getSchedulePdfStatus,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getTimesOfDiet(
+      {required String accessToken, required String userId}) async {
+    return await apiProvider
+        .getData(Constants.dietTimes, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getDaySlots(
+      {required String accessToken,
+      required String userId,
+      required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.dietTimes,
+        headers: {"accessToken": accessToken}, body: map);
+  }
+
+  Future<Response> getUserPlansWorkout(
+      {required String accessToken, required String userId}) async {
+    return await apiProvider.getData("${Constants.getUserWorkoutPlans}/$userId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getUserImagesProgress(
+      {required String accessToken, required String userId}) async {
+    return await apiProvider.getData(
+        "${Constants.getUserImagesProgress}/$userId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getUserPlanDetailsDiet(
+      {required String accessToken, required String planId}) async {
+    return await apiProvider.getData(
+        "${Constants.getUserDietPlanDetails}/$planId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getDietPdfRepo(
+      {required String accessToken,
+      required String planId,
+      required String userId}) async {
+    return await apiProvider.postData(Constants.getDietPdf,
+        body: {"userId": userId, "userPlanId": planId},
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getUserPlanDetailsWorkout(
+      {required String accessToken,
+      required String planId,
+      required bool showSlots,
+      required String userId}) async {
+    return await apiProvider.getData(
+        "${Constants.getUserWorkoutPlanDetails}/$planId/$userId/$showSlots",
+        headers: {"accessToken": accessToken});
+  }
+
+  // Lightweight read of one slot. Used by the popup-open and boundary-cross
+  // smart triggers — full schedule refetch would be wasteful when we only
+  // care about a single slot's status / trainerLink.
+  Future<Response> getSlotStatus(
+      {required String accessToken, required int slotId}) async {
+    return await apiProvider.getData("/admin/slot/$slotId/status",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getSubCategoriesBasedOnUserTypes(
+      {required String accessToken, required String userType}) async {
+    return await apiProvider.getData(
+        "${Constants.getSubCatBasedOnUserType}/$userType",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getSubUserBasedOnUserTypes(
+      {required String accessToken, required String userType}) async {
+    return await apiProvider.getData(
+        "${Constants.getUsersOnUserType}/$userType",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getPlansBasedOnSubCat(
+      {required String accessToken, required String subCat}) async {
+    return await apiProvider.getData(
+        "${Constants.getPlansBasedOnSubCat}/$subCat",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getWorkoutAndTrainerPlan(
+      {required String accessToken}) async {
+    return await apiProvider.getData(Constants.getWorkoutAndTrainersPlan,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getDietAndTrain({required String accessToken}) async {
+    return await apiProvider.getData(Constants.getAllDietAndTrain,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getAllUsers(
+      {bool isCustomerSupport = false,
+      required String accessToken,
+      required String userId}) async {
+    if (isCustomerSupport) {
+      return await apiProvider.getData(
+          "${Constants.getAllUserWithSpecificCustomer}/${userId}",
+          headers: {"accessToken": accessToken});
+    } else {
+      return await apiProvider.getData(Constants.getAllUsers,
+          headers: {"accessToken": accessToken});
+    }
+  }
+
+  Future<Response> getTrainerHome(
+      {required String accessToken, required String userId}) async {
+    return await apiProvider.getData("${Constants.getTrainerHome}/$userId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getWeeklyReportsRepo({required String accessToken}) async {
+    return await apiProvider
+        .getData(Constants.getReports, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getDietHome(
+      {required String accessToken, required String userId}) async {
+    return await apiProvider.getData("${Constants.getDietHome}/$userId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getFreePlan({required String accessToken}) async {
+    return await apiProvider.getData("${Constants.getFreePlan}",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getGuestUsers(
+      {required String accessToken, required String userId}) async {
+    return await apiProvider.getData(Constants.getGuestUsers,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getPlanImages({
+    required String accessToken,
+  }) async {
+    return await apiProvider.getData(Constants.getAllUsersPlanImages,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getTeamMembersRepo({
+    required String accessToken,
+  }) async {
+    return await apiProvider.getData(Constants.getTeamMembers,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getUserHome(
+      {required String accessToken,
+      required String userId,
+      required String code}) async {
+    return await apiProvider.getData("${Constants.getUserHome}/$userId/$code",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getAllPlans(
+      {required String accessToken, required String code}) async {
+    return await apiProvider.getData(
+      "${Constants.getAllPlans}/${code}",
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> addFreeTrialUser(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(
+      Constants.addFreeTrial,
+      headers: {"accessToken": accessToken},
+      body: map,
+    );
+  }
+
+  Future<Response> getAllPlansAdmin({required String accessToken}) async {
+    return await apiProvider.getData(
+      Constants.getAllPlans,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> getHealthTips({required String accessToken}) async {
+    return await apiProvider.getData(
+      Constants.getAllHealthTips,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  // Future<Response> getHomeReviews({required String accessToken}) async {
+  //   return await apiProvider.getData(Constants.getHomeReviews,
+  //       headers: {"accessToken": accessToken});
+  // }
+  Future<Response> addPlanRepo(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.postAddPlan,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> updatePlanRepo(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.postUpdatePlan,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addUserRepo(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.addNewUser,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addUserDetails(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.addUserDetails,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> savePcosScreening(
+      {required String accessToken, required Map<String, dynamic> body}) async {
+    return await apiProvider.postData(Constants.savePcosScreening,
+        body: body, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> saveHealthScreening(
+      {required String accessToken, required Map<String, dynamic> body}) async {
+    return await apiProvider.postData(Constants.saveHealthScreening,
+        body: body, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getHealthScreening(
+      {required String accessToken, String? conditionType}) async {
+    final query = conditionType != null ? '?conditionType=$conditionType' : '';
+    return await apiProvider.getData('${Constants.getHealthScreening}$query',
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getPaymentLink(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.payment,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  /// Direct Pay (Payin PWA): backend returns payment URL; client_secret never sent to app
+  Future<Response> getDirectPayPaymentUrl(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.directPayUrl,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getAllTimesWithSlotsTrainer(
+      {required String accessToken}) async {
+    return await apiProvider.getData(Constants.getAllTimesWithSlots,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getAllFreeTrialUsers(
+      {required String accessToken,
+      required String id,
+      required String slotId}) async {
+    return await apiProvider.getData(
+        "${Constants.getAllFreeTrialUsers}/$id/$slotId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> changeFreeTrialStatus(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.changeFreeTrialStatus,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addCountry(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.country,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addTimeDuration(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.timeDuration,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getCountries({required String accessToken}) async {
+    return await apiProvider
+        .getData(Constants.country, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> getTmeDurations({required String accessToken}) async {
+    return await apiProvider
+        .getData(Constants.timeDuration, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addTrainerSlots(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.add_slots,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addClassDetails(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.updateSlotTrainer,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addFreeTrialUserData(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.addFreeTrailUser,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> assignWorkoutAndTrainer(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.assignWorkoutAndTrainerPlan,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addDietitionPlan(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.addDietionPlan,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addAnnouncement(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.addAnnouncement,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> freezeMyAccount(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.freezeMyAccount,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> synchronizationRepo({required String accessToken}) async {
+    return await apiProvider.getData(Constants.synchronization,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> updateWeeklyReportRepo(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.addReport,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> updateLinkRepo(
+      {required String accessToken,
+      required Map<String, dynamic> map,
+      required bool isDiet}) async {
+    return await apiProvider.postData(
+        isDiet ? Constants.updateDietLink : Constants.updateLink,
+        body: map,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> updateTrainerJoin(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.updateTrainerJoin,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> updateSlotStatus(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.updateSlotStatus,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addTeamMemberRepo(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.addTeamMember,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> updateUserRepo(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.updateUser,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> updateUserPayment(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.paymentSuccess,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> approveUser(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.approveUser,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addTestimonials(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.setFormData(
+        url: Constants.addTestimonials,
+        formData: map,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addPdfFileRepo(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.setFormData(
+        url: Constants.addPdfFile,
+        formData: map,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addDaySlots(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(
+        "${Constants.dietTimes}/addOrUpdateDaySlot",
+        body: map,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addReview(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.addReview,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> bookAppointment(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData("/appointment",
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> updateAppointment(
+      {required String accessToken,
+      required Map<String, dynamic> map,
+      required String id}) async {
+    return await apiProvider.putData("/appointment/$id", body: map, headers: {
+      "accessToken": accessToken,
+    });
+  }
+
+  Future<Response> deleteAppointment(
+      {required String accessToken, required String id}) async {
+    return await apiProvider.deleteData("/appointment/$id", headers: {
+      "accessToken": accessToken,
+    });
+  }
+
+  // Flips a confirmed consultation to "In Progress" and turns the
+  // client's Join Meeting button green. Separate from updateAppointment
+  // above — the backend endpoint enforces its own confirm-first check
+  // and sends the client a "session starting" push, so this hits
+  // /appointment/:id/start directly rather than going through the
+  // generic status-patch endpoint.
+  Future<Response> startAppointmentSession(
+      {required String accessToken, required String id}) async {
+    return await apiProvider.postData("/appointment/$id/start",
+        body: {}, headers: {
+      "accessToken": accessToken,
+    });
+  }
+
+  // Dietitian marks that the client never joined her consultation.
+  Future<Response> reportClientNoShow(
+      {required String accessToken, required String id}) async {
+    return await apiProvider.postData("/appointment/$id/client-no-show",
+        body: {}, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> validateTrialToken({required String token}) async {
+    return await apiProvider.postData(
+      Constants.trialValidateToken,
+      body: {"token": token},
+    );
+  }
+
+  Future<Response> startTrial(
+      {required String accessToken, String? token}) async {
+    return await apiProvider.postData(
+      Constants.trialStart,
+      body: {"token": token ?? ""},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// End-of-trial summary + offer, priced for [country] (same country
+  /// name the plans screen uses).
+  Future<Response> getTrialSummary({
+    required String accessToken,
+    required String country,
+  }) async {
+    return await apiProvider.getData(
+      '${Constants.trialSummary}?country=${Uri.encodeQueryComponent(country)}',
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Class schedule for the trial onboarding class picker.
+  Future<Response> getTrialClasses({required String accessToken}) async {
+    return await apiProvider.getData(
+      Constants.trialClasses,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> getMyTrial({required String accessToken}) async {
+    return await apiProvider.getData(
+      Constants.trialMe,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  // Trial-to-Plan funnel — submits the trimmed quick-intake form and
+  // gets back the auto-generated + auto-activated starter DietPlan in
+  // one round trip. Generation can take as long as the dietitian-side
+  // AI generation (that path is up to 14 days; this is only 7, but
+  // still a real Gemini call), so this uses the same 120s override as
+  // DietPlanAdminRepository.generatePlan rather than the default 30s.
+  Future<Response> submitTrialQuickIntake({
+    required String accessToken,
+    String? goal,
+    String? allergies,
+    int? mealsPerDay,
+  }) async {
+    return await apiProvider.postData(
+      Constants.trialQuickIntake,
+      body: {
+        if (goal != null && goal.isNotEmpty) "goal": goal,
+        if (allergies != null && allergies.isNotEmpty) "allergies": allergies,
+        if (mealsPerDay != null) "mealsPerDay": mealsPerDay,
+      },
+      headers: {"accessToken": accessToken},
+      timeout: const Duration(seconds: 120),
+    );
+  }
+
+  Future<Response> bookTrialDay({
+    required String accessToken,
+    required int day,
+    required int slotId,
+  }) async {
+    return await apiProvider.postData(
+      Constants.trialBookDay,
+      body: {"day": day, "slotId": slotId},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> markTrialAttendance({
+    required String accessToken,
+    required int day,
+    int attendedMinutes = 0,
+  }) async {
+    return await apiProvider.postData(
+      Constants.trialAttendance,
+      body: {"day": day, "attendedMinutes": attendedMinutes},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> markTrialConverted({
+    required String accessToken,
+  }) async {
+    return await apiProvider.postData(
+      Constants.trialConvert,
+      body: {},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> updateUserProfile(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.setFormData(
+        url: Constants.updateUserProfile,
+        formData: map,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> updateUserDietOfWeek(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.updateUserDietOfWeek,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addPlanImageRepo(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    print("map $map");
+    return await apiProvider.setFormData(
+        url: Constants.addPlanImage,
+        formData: map,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addProgressImages(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.setFormData(
+        url: Constants.addProgressImages,
+        formData: map,
+        isProgress: true,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> addCalorieImage(
+      {required String accessToken,
+      required Map<String, dynamic> map,
+      required String id}) async {
+    return await apiProvider.postData("${Constants.addCalorieImage}/$id",
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  /// Motivation module
+  Future<Response> getMotivationStats(
+      {required String accessToken, required String userId}) async {
+    return await apiProvider.getData("${Constants.getMotivationStats}/$userId",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> markMotivationAttendance(
+      {required String accessToken,
+      required String userId,
+      required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(
+        "${Constants.markMotivationAttendance}/$userId",
+        body: map,
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> classPresenceJoin(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.classPresenceJoin,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> classPresenceLeave(
+      {required String accessToken, required Map<String, dynamic> map}) async {
+    return await apiProvider.postData(Constants.classPresenceLeave,
+        body: map, headers: {"accessToken": accessToken});
+  }
+
+  /// Post-related APIs
+  Future<Response> getAllPosts(
+      {required String accessToken, bool approved = true}) async {
+    return await apiProvider.getData("${Constants.getAllPosts}$approved",
+        headers: {"accessToken": accessToken});
+  }
+
+  Future<Response> createPost({
+    required String accessToken,
+    required String text,
+    required String userId,
+    required bool isPost,
+    File? file,
+  }) async {
+    Map<String, dynamic> body = {
+      "text": text,
+      "isPost": isPost,
+      "userId": userId,
+    };
+    if (file != null) {
+      body["image"] = file.path;
+      return await apiProvider.setFormData(
+        url: Constants.createPost,
+        formData: body,
+        headers: {"accessToken": accessToken},
+      );
+    } else {
+      return await apiProvider.postData(
+        Constants.createPost,
+        body: body,
+        headers: {"accessToken": accessToken},
+      );
+    }
+  }
+
+  Future<Response> deletePost(
+      {required String accessToken, required int postId}) async {
+    return await apiProvider.deleteData("${Constants.deletePost}/$postId",
+        headers: {"accessToken": accessToken});
+  }
+
+  /// Upsert the current week's weight (Monday-start convention enforced
+  /// server-side). Same self-contained token pattern as [logWater].
+  Future<bool> logWeight(double kg) async {
+    try {
+      final prefs = Get.find<SharedPreferences>();
+      final token = prefs.getString(Constants.accessToken) ?? '';
+      if (token.isEmpty) return false;
+      final response = await apiProvider.postData(
+        Constants.weightLog,
+        body: {'weightKg': kg},
+        headers: {"accessToken": token},
+      ).timeout(const Duration(seconds: 10));
+      final body = response.body;
+      if (body is Map && body['status'] == '1') return true;
+      return false;
+    } catch (e) {
+      debugPrint('[HomeRepo.logWeight] $e');
+      return false;
+    }
+  }
+
+  /// Set (or clear with null) the user's target weight. Updates
+  /// `User.targetWeightKg` server-side.
+  ///
+  /// [weightGoalDirection] ('lose' | 'gain' | null) is only sent when
+  /// [includeDirection] is true — the backend distinguishes "omitted"
+  /// (leave whatever's saved untouched) from "sent as null" (clear it),
+  /// same contract as `targetWeightKg` itself. The modal always passes
+  /// includeDirection: true since it always resolves a concrete value
+  /// (either inferred from mainGoal or picked by the user) before saving.
+  Future<bool> saveTargetWeight(
+    double? kg, {
+    String? weightGoalDirection,
+    bool includeDirection = false,
+  }) async {
+    try {
+      final prefs = Get.find<SharedPreferences>();
+      final token = prefs.getString(Constants.accessToken) ?? '';
+      if (token.isEmpty) return false;
+      final body = <String, dynamic>{'targetWeightKg': kg};
+      if (includeDirection) {
+        body['weightGoalDirection'] = weightGoalDirection;
+      }
+      final response = await apiProvider.postData(
+        Constants.targetWeight,
+        body: body,
+        headers: {"accessToken": token},
+      ).timeout(const Duration(seconds: 10));
+      final resBody = response.body;
+      if (resBody is Map && resBody['status'] == '1') return true;
+      return false;
+    } catch (e) {
+      debugPrint('[HomeRepo.saveTargetWeight] $e');
+      return false;
+    }
+  }
+
+  /// Set/update `User.mainGoal` server-side — the signup goal category
+  /// (Lose weight / Build strength & tone / etc.), not the numeric
+  /// [saveTargetWeight] above. Backs the PaidHero "Set goal →" chip.
+  Future<bool> saveMainGoal(String goal) async {
+    try {
+      final prefs = Get.find<SharedPreferences>();
+      final token = prefs.getString(Constants.accessToken) ?? '';
+      if (token.isEmpty) return false;
+      final response = await apiProvider.postData(
+        Constants.mainGoal,
+        body: {'mainGoal': goal},
+        headers: {"accessToken": token},
+      ).timeout(const Duration(seconds: 10));
+      final body = response.body;
+      if (body is Map && body['status'] == '1') return true;
+      return false;
+    } catch (e) {
+      debugPrint('[HomeRepo.saveMainGoal] $e');
+      return false;
+    }
+  }
+
+  /// Log a water intake for today. Self-contained (reads token via
+  /// `Get.find<SharedPreferences>()`) to match [getPaidHomeDashboard]'s
+  /// pattern. Returns true on status="1" responses, false on anything else.
+  /// 10 s timeout.
+  Future<bool> logWater(int amountMl) async {
+    try {
+      final prefs = Get.find<SharedPreferences>();
+      final token = prefs.getString(Constants.accessToken) ?? '';
+      if (token.isEmpty) return false;
+
+      final response = await apiProvider.postData(
+        Constants.waterLog,
+        body: {'amountMl': amountMl},
+        headers: {"accessToken": token},
+      ).timeout(const Duration(seconds: 10));
+
+      final body = response.body;
+      if (body is Map && body['status'] == '1') return true;
+      return false;
+    } catch (e) {
+      debugPrint('[HomeRepo.logWater] $e');
+      return false;
+    }
+  }
+
+  /// PaidHomeScreenV2 aggregate. Reads the access token from SharedPreferences
+  /// internally so the controller doesn't have to thread it. Returns null on
+  /// any failure (network error, timeout, malformed body, non-"1" status).
+  /// 15 s timeout so a hung endpoint never blocks the UI forever.
+  Future<HomeDashboardModel?> getPaidHomeDashboard() async {
+    try {
+      final prefs = Get.find<SharedPreferences>();
+      final token = prefs.getString(Constants.accessToken) ?? '';
+      if (token.isEmpty) return null;
+
+      final response = await apiProvider.getData(
+        Constants.paidHomeDashboard,
+        headers: {"accessToken": token},
+      ).timeout(const Duration(seconds: 15));
+
+      final body = response.body;
+      if (body is! Map || body['status'] != '1' || body['data'] is! Map) {
+        return null;
+      }
+      return HomeDashboardModel.fromJson(
+        Map<String, dynamic>.from(body['data'] as Map),
+      );
+    } catch (e) {
+      debugPrint('[HomeRepo.getPaidHomeDashboard] $e');
+      return null;
+    }
+  }
+
+  // ─── Consultation flow (Phase 1B endpoints) ───────────────────────
+
+  Future<Response> getPreConsultationProfile(
+      {required String accessToken}) async {
+    return await apiProvider.getData(
+      Constants.preConsultationProfile,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Per-step PATCH auto-save (Decision 5). `body` is any subset of
+  /// editable fields plus optional `step`/`isComplete` keys.
+  ///
+  /// Hits PATCH (not PUT) — backend `routes/FrontSite/preConsultation.js`
+  /// only registers `router.patch("/")`, so PUT returned 404 "Cannot
+  /// PUT /users/pre-consultation". The method name + doc-comment
+  /// always said PATCH; the impl drifted before patchData existed on
+  /// ApiProvider (added in Phase E.1).
+  /// Signup step 5 answer and the "recently had a baby" access check.
+  Future<Response> getLifeStage({required String accessToken}) async {
+    return await apiProvider.getData(
+      '${Constants.preConsultationProfile}/life-stage',
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> saveLifeStage({
+    required String accessToken,
+    required Map<String, dynamic> body,
+  }) async {
+    return await apiProvider.postData(
+      '${Constants.preConsultationProfile}/life-stage',
+      body: body,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> patchPreConsultationProfile({
+    required String accessToken,
+    required Map<String, dynamic> body,
+  }) async {
+    return await apiProvider.patchData(
+      Constants.preConsultationProfile,
+      body: body,
+      headers: {"accessToken": accessToken, "Content-Type": "application/json"},
+    );
+  }
+
+  /// Reuses SlotDiet via the new dietitian-availability endpoint
+  /// (Decision 3). Returns an envelope; controller deserializes into
+  /// DietitianAvailability.
+  Future<Response> getDietitianAvailability({
+    required String accessToken,
+    required int dietitianId,
+    String? from,
+    String? to,
+  }) async {
+    final qs = StringBuffer('?dietitianId=$dietitianId');
+    if (from != null) qs.write('&from=$from');
+    if (to != null) qs.write('&to=$to');
+    return await apiProvider.getData(
+      "${Constants.dietitianAvailability}${qs.toString()}",
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Books a consultation by creating an Appointment (existing endpoint
+  /// at POST /appointment/, extended in Phase 1B to accept `kind`).
+  Future<Response> bookConsultation({
+    required String accessToken,
+    required Map<String, dynamic>
+        body, // {date, userId, dietitionId, timeSlotId, userPlanId, kind}
+  }) async {
+    return await apiProvider.postData(
+      "/appointment",
+      body: body,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Reports the dietitian didn't show. Path: /appointment/:id/no-show.
+  Future<Response> reportConsultationNoShow({
+    required String accessToken,
+    required int appointmentId,
+    String? reason,
+  }) async {
+    return await apiProvider.postData(
+      "/appointment/$appointmentId${Constants.appointmentNoShowSuffix}",
+      body: {if (reason != null) "reason": reason},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// The signed-in user's own current active (pending/confirmed/In
+  /// Progress) consultation booking, if any. Powers the Diet tab's
+  /// "your booked consultation" card. Path: GET /appointment/me/current.
+  Future<Response> getMyCurrentAppointment({required String accessToken}) async {
+    return await apiProvider.getData(
+      "/appointment/me/current",
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// User-initiated cancel (ownership + status guarded server-side).
+  /// Path: POST /appointment/:id/cancel.
+  Future<Response> cancelMyAppointment({
+    required String accessToken,
+    required int appointmentId,
+  }) async {
+    return await apiProvider.postData(
+      "/appointment/$appointmentId/cancel",
+      body: {},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> upsertMealLog({
+    required String accessToken,
+    required Map<String, dynamic>
+        body, // {date, mealType, status, reasonCode?, alternativeText?}
+  }) async {
+    return await apiProvider.postData(
+      Constants.mealLogs,
+      body: body,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Range defaults to last 30 days server-side when params omitted.
+  Future<Response> listMealLogs({
+    required String accessToken,
+    String? from,
+    String? to,
+  }) async {
+    final qs = <String>[];
+    if (from != null) qs.add("from=$from");
+    if (to != null) qs.add("to=$to");
+    final suffix = qs.isEmpty ? "" : "?${qs.join("&")}";
+    return await apiProvider.getData(
+      "${Constants.mealLogs}$suffix",
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Server hook computes the flag — client never overrides. Body should
+  /// match Day7Review.toJson().
+  Future<Response> submitDay7Review({
+    required String accessToken,
+    required Map<String, dynamic> body,
+  }) async {
+    return await apiProvider.postData(
+      Constants.day7Review,
+      body: body,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Day 15 / Day 30. Idempotent on (userPlanId, cycle) server-side.
+  Future<Response> submitProgress({
+    required String accessToken,
+    required Map<String, dynamic> body,
+  }) async {
+    return await apiProvider.postData(
+      Constants.progressSubmission,
+      body: body,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Section 9 "previous values pre-filled for comparison". Day 15 has no
+  /// earlier checkpoint on the plan — server always returns `previous:
+  /// null` for cycle 15, which is expected, not an error. Day 30's
+  /// previous values are the same plan's cycle-15 submission.
+  Future<Response> getPreviousProgress({
+    required String accessToken,
+    required int userPlanId,
+    required int cycle,
+  }) async {
+    return await apiProvider.getData(
+      "${Constants.progressSubmission}/previous?userPlanId=$userPlanId&cycle=$cycle",
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// User-side escalation: MEDICAL or PLAN_DELAYED.
+  Future<Response> openEscalation({
+    required String accessToken,
+    required String trigger,
+    String? severity,
+    Map<String, dynamic>? payload,
+  }) async {
+    return await apiProvider.postData(
+      Constants.userEscalations,
+      body: {
+        "trigger": trigger,
+        if (severity != null) "severity": severity,
+        if (payload != null) "payload": payload,
+      },
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> dismissPopup({
+    required String accessToken,
+    required String variable,
+    Map<String, dynamic>? metadata,
+  }) async {
+    return await apiProvider.postData(
+      "${Constants.popupAck}/$variable/dismiss",
+      body: {if (metadata != null) "metadata": metadata},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> completePopup({
+    required String accessToken,
+    required String variable,
+    Map<String, dynamic>? metadata,
+  }) async {
+    return await apiProvider.postData(
+      "${Constants.popupAck}/$variable/complete",
+      body: {if (metadata != null) "metadata": metadata},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// "Remind me tomorrow" — pushes the popup's eligibility forward
+  /// server-side (see popupEligibility.js's snoozedUntil handling)
+  /// instead of the plain dismiss, which only bumps dismissCount and
+  /// doesn't actually delay re-eligibility.
+  Future<Response> snoozePopup({
+    required String accessToken,
+    required String variable,
+    int days = 1,
+  }) async {
+    return await apiProvider.postData(
+      "${Constants.popupAck}/$variable/snooze",
+      body: {"days": days},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  // ── Admin / dietitian-side helpers (used by Phase 3-4 dashboard) ───
+
+  Future<Response> adminGetPreConsultationProfile({
+    required String accessToken,
+    required int userId,
+  }) async {
+    return await apiProvider.getData(
+      "${Constants.adminPreConsultationProfile}/$userId",
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> adminPatchPreConsultationProfile({
+    required String accessToken,
+    required int userId,
+    required Map<String, dynamic> body,
+  }) async {
+    return await apiProvider.putData(
+      "${Constants.adminPreConsultationProfile}/$userId",
+      body: body,
+      headers: {"accessToken": accessToken, "Content-Type": "application/json"},
+    );
+  }
+
+  Future<Response> adminAddPreConsultationComment({
+    required String accessToken,
+    required int userId,
+    required String text,
+  }) async {
+    return await apiProvider.postData(
+      "${Constants.adminPreConsultationProfile}/$userId/comments",
+      body: {"text": text},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> adminListDay7Reviews({
+    required String accessToken,
+    bool? flagged,
+    int? userId,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final qs = <String>['limit=$limit', 'offset=$offset'];
+    if (flagged != null) qs.add('flagged=$flagged');
+    if (userId != null) qs.add('userId=$userId');
+    return await apiProvider.getData(
+      "${Constants.adminDay7Reviews}?${qs.join('&')}",
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> adminGetUserProgress({
+    required String accessToken,
+    required int userId,
+  }) async {
+    return await apiProvider.getData(
+      "${Constants.adminUserProgress}/$userId/progress",
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> adminListEscalations({
+    required String accessToken,
+    String? status,
+    String? trigger,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final qs = <String>['limit=$limit', 'offset=$offset'];
+    if (status != null) qs.add('status=$status');
+    if (trigger != null) qs.add('trigger=$trigger');
+    return await apiProvider.getData(
+      "${Constants.adminEscalations}?${qs.join('&')}",
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> adminResolveEscalation({
+    required String accessToken,
+    required int ticketId,
+    String? resolutionNote,
+  }) async {
+    return await apiProvider.postData(
+      "${Constants.adminEscalations}/$ticketId/resolve",
+      body: {if (resolutionNote != null) "resolutionNote": resolutionNote},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> adminGetMetricsOverview(
+      {required String accessToken}) async {
+    return await apiProvider.getData(
+      Constants.adminMetricsOverview,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  Future<Response> approvePost(
+      {required String accessToken,
+      required int postId,
+      required bool approved}) async {
+    return await apiProvider.putData(
+      "${Constants.approvePost}/$postId",
+      body: {"approved": approved},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Like or Unlike Post
+  Future<Response> likePost({
+    required String accessToken,
+    required int postId,
+    required String userId,
+  }) async {
+    final body = {
+      "postId": postId.toString(),
+      "userId": userId,
+    };
+
+    return await apiProvider.postData(
+      Constants.likePost,
+      body: body,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Send a Reply (WhatsApp style)
+  Future<Response> sendReply({
+    required String accessToken,
+    required int postId,
+    required String userId,
+    required String message,
+    int? replyToId, // optional if replying to another message
+  }) async {
+    final body = {
+      "postId": postId.toString(),
+      "userId": userId,
+      "text": message,
+    };
+
+    if (replyToId != null) {
+      body["replyToId"] = replyToId.toString();
+    }
+
+    return await apiProvider.postData(
+      Constants.sendReply,
+      body: body,
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Get Replies for a Post
+  Future<Response> getReplies({
+    required String accessToken,
+    required int postId,
+  }) async {
+    return await apiProvider.getData(
+      "${Constants.getReplies}/$postId",
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+// Future<Response> submitOrSkipFeedback({required String accessToken, required Map<String, dynamic> map}) async {
+//   return await apiProvider.postData(Constants.skipOrSubmit,
+//       body: map, headers: {"accessToken": accessToken});
+// }
+// Future<Response> cancelAppoinment({required String accessToken, required Map<String, String> map}) async {
+//   return await apiProvider.postData(Constants.removeAppointment,
+//       body: map, headers: {"accessToken": accessToken});
+// }
+//
+//
+//
+// Future<Response> getSubCategories(
+//     {required String accessToken, required Map<String, String> map}) async {
+//   return await apiProvider.postData(Constants.getSubCategories,
+//       body: map, headers: {"accessToken": accessToken});
+// }
+// Future<Response> getAllAppointmentsByDate(
+//     {required String accessToken, required Map<String, String> map}) async {
+//   return await apiProvider.postData(Constants.getAllAppointmentsByDate,
+//       body: map, headers: {"accessToken": accessToken});
+// }
+//
+// Future<Response> get(
+//     {required String accessToken, required Map<String, String> map}) async {
+//   return await apiProvider.postData(Constants.getCatByKeyword,
+//       body: map, headers: {"accessToken": accessToken});
+// }
+}

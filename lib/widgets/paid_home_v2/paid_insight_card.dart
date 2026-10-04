@@ -1,19 +1,33 @@
 import 'package:flutter/material.dart';
 
 import '../../data/models/home_dashboard/home_dashboard_model.dart';
-import '../new_home/phase_theme.dart';
 
-/// Dark-green insight card that sits in the cream scroll body directly
-/// below the hero. Traced to the `insightCard()` helper in
-/// `new screens/Home_All43_Variants.html` lines 77-86.
+/// "Luna by FitHer" daily insight card (light mint design).
+/// Old dark card kept as paid_insight_card.dart.bak_luna.
 ///
-/// Visual: `#163220` bg with phase-accent border, phase-accent icon badge,
-/// bold accent "FitHer AI" title + muted "· Today's insight" subtitle,
-/// multi-line insight body at 62% white.
+/// The server sends one text; the first sentence becomes the bold title
+/// and the rest the body. "Day 6 - " prefixes and dashes are cleaned out.
 class PaidInsightCard extends StatelessWidget {
   final HomeDashboardModel dashboard;
 
   const PaidInsightCard({Key? key, required this.dashboard}) : super(key: key);
+
+  static const _ink = Color(0xFF163220);
+  static const _soft = Color(0xFF4F6B5A);
+  static const _deep = Color(0xFF3F9B35);
+
+  /// Splits the insight into a title and a body.
+  static (String, String) _split(String raw) {
+    var t = raw.trim();
+    // "Day 14 - Peak energy. ..." -> "Peak energy. ..."
+    t = t.replaceFirst(RegExp(r'^Day\s*\d+\s*[-–—]\s*'), '');
+    // No dashes in the copy.
+    t = t.replaceAll(RegExp(r'\s+[-–—]\s+'), ', ');
+    final m = RegExp(r'^(.+?[.!?])\s+(.*)$', dotAll: true).firstMatch(t);
+    if (m == null) return (t.replaceFirst(RegExp(r'[.]$'), ''), '');
+    final title = m.group(1)!.replaceFirst(RegExp(r'[.]$'), '');
+    return (title, m.group(2)!.trim());
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -23,106 +37,134 @@ class PaidInsightCard extends StatelessWidget {
         insight.text!.trim().isEmpty) {
       return const SizedBox.shrink();
     }
+    final (title, body) = _split(insight.text!);
 
-    // Accent resolution: prefer backend-supplied hex; on any parse error
-    // fall back to the theme's phase-derived accent. Never throws.
-    final themeAccent =
-        PhaseTheme.forPhaseString(dashboard.cycle?.phase).insightAccent;
-    final accent = _parseHex(insight.accentHex) ?? themeAccent;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFD8EDD4), width: 1),
+        ),
+        child: Stack(
+          children: [
+            // Soft decorative circle, top right.
+            Positioned(
+              top: -40,
+              right: -40,
+              child: Container(
+                width: 130,
+                height: 130,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0xFFEAF7E4),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      const _LunaAvatar(),
+                      const SizedBox(width: 8),
+                      const Text.rich(
+                        TextSpan(children: [
+                          TextSpan(
+                            text: 'Luna',
+                            style: TextStyle(fontWeight: FontWeight.w700, color: _deep),
+                          ),
+                          TextSpan(
+                            text: ' by FitHer',
+                            style: TextStyle(fontSize: 8, fontWeight: FontWeight.w500, color: Color(0xFF9AB09A)),
+                          ),
+                        ]),
+                        style: TextStyle(fontFamily: 'Poppins', fontSize: 13),
+                      ),
+                      const Spacer(),
+                      Text(
+                        'Today',
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w500,
+                          color: const Color(0xFF9AB09A),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 9),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: _ink,
+                      height: 1.3,
+                    ),
+                  ),
+                  if (body.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      body,
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 11.5,
+                        color: _soft,
+                        height: 1.55,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
+/// Green round avatar with a moon and a small sparkle.
+class _LunaAvatar extends StatelessWidget {
+  const _LunaAvatar();
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      width: 28,
+      height: 28,
       decoration: BoxDecoration(
-        color: const Color(0xFF163220),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: accent.withOpacity(0.16), // HTML: ${accent}28
-          width: 1,
+        shape: BoxShape.circle,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF7ACB63), PaidInsightCard._deep],
         ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF163220).withOpacity(0.15),
-            offset: const Offset(0, 4),
-            blurRadius: 16,
+            color: PaidInsightCard._deep.withOpacity(0.3),
+            offset: const Offset(0, 3),
+            blurRadius: 8,
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // Icon badge — 26×26, accent-tinted bg + border, robot icon.
-              Container(
-                width: 26,
-                height: 26,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: accent.withOpacity(0.13), // HTML: ${accent}22
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: accent.withOpacity(0.20), // HTML: ${accent}33
-                    width: 1,
-                  ),
-                ),
-                child: Icon(
-                  Icons.smart_toy_outlined,
-                  size: 14,
-                  color: accent,
-                ),
-              ),
-              const SizedBox(width: 9),
-              Text(
-                'FitHer AI',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: accent,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  '· Today\'s insight',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: Colors.white.withOpacity(0.25),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            insight.text!,
-            // No maxLines — let long insights wrap naturally per spec.
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.white.withOpacity(0.62),
-              height: 1.6,
-            ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: const [
+          Icon(Icons.nightlight_round, size: 14, color: Colors.white),
+          Positioned(
+            top: 5,
+            right: 5,
+            child: Icon(Icons.auto_awesome, size: 6, color: Color(0xFFFFE9A8)),
           ),
         ],
       ),
     );
-  }
-
-  /// Tolerant `#RRGGBB` / `#AARRGGBB` / bare 6-or-8-hex parser. Returns null
-  /// on any failure — caller uses the theme accent as fallback so the
-  /// widget can't crash on a bad server payload.
-  static Color? _parseHex(String? hex) {
-    if (hex == null || hex.isEmpty) return null;
-    try {
-      var s = hex.startsWith('#') ? hex.substring(1) : hex;
-      if (s.length == 6) s = 'FF$s';
-      if (s.length != 8) return null;
-      return Color(int.parse(s, radix: 16));
-    } catch (_) {
-      return null;
-    }
   }
 }

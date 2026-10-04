@@ -67,6 +67,22 @@ class ConsultationController extends GetxController {
   // deliveryType, waitDays } or null on failure. access is one of:
   // full | pregnant | needs_details | waiting | needs_clearance.
 
+  /// Steps of the pre-consultation form she still has to answer
+  /// (server decides, see helper/preConsultRequirements.js).
+  Future<Map<String, dynamic>?> getPreConsultRequirements(String planType) async {
+    try {
+      final r = await homeRepo.getPreConsultRequirements(
+          accessToken: _token, planType: planType);
+      final parsed = r.body is String ? jsonDecode(r.body) : r.body;
+      if (parsed is Map && parsed['status'] == '1' && parsed['data'] is Map) {
+        return Map<String, dynamic>.from(parsed['data']);
+      }
+    } catch (e) {
+      debugPrint('[preConsult] requirements: $e');
+    }
+    return null;
+  }
+
   Future<Map<String, dynamic>?> getLifeStage() async {
     try {
       final r = await homeRepo.getLifeStage(accessToken: _token);
@@ -228,6 +244,7 @@ class ConsultationController extends GetxController {
     required int timeSlotId,     // SlotDiet.id
     required int userPlanId,
     required String kind,        // "initial" | "followup"
+    String? note,                // optional note for the dietitian
   }) async {
     try {
       final response = await homeRepo.bookConsultation(
@@ -241,6 +258,7 @@ class ConsultationController extends GetxController {
           'timeSlotId': timeSlotId,
           'userPlanId': userPlanId,
           'kind': kind,
+          if (note != null && note.trim().isNotEmpty) 'message': note.trim(),
         },
       );
       final body = response.body;

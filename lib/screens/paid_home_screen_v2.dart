@@ -11,16 +11,14 @@ import '../UI/dashboard_module/bottom_bar_screen/bottom_bar_screen.dart';
 import '../data/controllers/paid_home_controller/paid_home_controller.dart';
 import '../data/models/home_dashboard/home_dashboard_model.dart';
 import '../utils/app_clock.dart';
-import '../widgets/paid_home_v2/next_up_glow.dart';
 import '../widgets/paid_home_v2/paid_cycle_card.dart';
-import '../widgets/paid_home_v2/paid_feel_selector.dart';
 import '../widgets/paid_home_v2/paid_footer.dart';
 import '../widgets/paid_home_v2/paid_hero.dart';
 import '../widgets/paid_home_v2/paid_insight_card.dart';
-import '../widgets/paid_home_v2/paid_sleep_card.dart';
 import '../widgets/paid_home_v2/paid_stats_row.dart'
     show PaidStatsRow;
-import '../widgets/paid_home_v2/paid_water_card.dart';
+import '../widgets/paid_home_v2/today_insights_box.dart';
+import '../widgets/paid_home_v2/talk_to_expert_card.dart';
 import '../widgets/v2/plan_expiry_banner.dart';
 import '../widgets/v2/plan_frozen_banner.dart';
 import '../widgets/v2/v2_plan_preparing_card.dart';
@@ -79,6 +77,55 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
   // _controller.refreshDashboard() on return would NOT have picked up a
   // freeze/unfreeze done on Profile -- only remounting them does.
   int _refreshGen = 0;
+
+  // Guided scroll: after she logs her feeling the screen glides down to
+  // water and sleep; once those are done it glides on to the stats row.
+  // Only once per step per day, never while she is scrolling herself.
+  final GlobalKey _waterSleepKey = GlobalKey();
+  final GlobalKey _statsKey = GlobalKey();
+  _DailyItem? _lastNextUp;
+  static final Set<String> _guidedToday = {};
+
+  void _maybeGuideScroll(_DailyItem nextUp) {
+    final prev = _lastNextUp;
+    _lastNextUp = nextUp;
+    if (prev == null || prev == nextUp) return;
+
+    GlobalKey? target;
+    String? step;
+    if (prev == _DailyItem.mood) {
+      target = _waterSleepKey;
+      step = 'afterFeeling';
+    } else if ((prev == _DailyItem.water || prev == _DailyItem.sleep) &&
+        nextUp == _DailyItem.none) {
+      target = _statsKey;
+      step = 'afterSleep';
+    }
+    if (target == null || step == null) return;
+
+    final day = DateTime.now().toIso8601String().substring(0, 10);
+    if (!_guidedToday.add('$day:$step')) return;
+
+    final key = target;
+    // A short pause so she sees her tap land (and the tip appear) first.
+    Future.delayed(const Duration(milliseconds: 500), () {
+      final ctx = key.currentContext;
+      if (!mounted || ctx == null) return;
+      final scrollable = Scrollable.maybeOf(ctx);
+      if (scrollable != null &&
+          scrollable.position.isScrollingNotifier.value) {
+        return;
+      }
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 550),
+        curve: Curves.easeInOutCubic,
+        // Only moves if the card is below the screen, and only as far as
+        // needed to show all of it.
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      );
+    });
+  }
 
   // Step 4-style sync layers — same pattern as the workout schedule.
   // Heartbeat keeps live/comingUp data fresh when the realtime socket
@@ -301,6 +348,7 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
       }
       final hasCycle = dashboard.cycle?.cycleDay != null;
       final nextUp = _nextDailyItem(dashboard);
+      _maybeGuideScroll(nextUp);
       return RefreshIndicator(
           onRefresh: _controller.refreshDashboard,
           child: SingleChildScrollView(
@@ -353,48 +401,27 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      // Book a call with her dietitian (hides itself when
+                      // she has no dietitian or a call is already booked).
+                      TalkToExpertCard(key: ValueKey('expert_$_refreshGen')),
                       PaidInsightCard(dashboard: dashboard),
                       const SizedBox(height: 8),
-                      // Daily check-in chain: Mood -> Water -> Sleep. A
-                      // soft glow points at whichever of the three is
-                      // still unfilled today, and moves on to the next
-                      // one automatically the moment the current one is
-                      // logged (nextUp is recomputed from the dashboard
-                      // on every rebuild here). No glow on any of them
-                      // once all three are done for the day.
-                      NextUpGlow(
-                        active: nextUp == _DailyItem.mood,
-                        color: const Color(0xFF6DC55A),
-                        child: PaidFeelSelector(dashboard: dashboard),
+                      // "Today's insights" box: feeling, water and sleep.
+                      // Inputs stay open until all three are logged, then
+                      // it folds into three tiles. The soft glow still
+                      // points at the next unfilled input.
+                      TodayInsightsBox(
+                        dashboard: dashboard,
+                        glowMood: nextUp == _DailyItem.mood,
+                        glowWater: nextUp == _DailyItem.water,
+                        glowSleep: nextUp == _DailyItem.sleep,
+                        waterSleepKey: _waterSleepKey,
                       ),
                       const SizedBox(height: 8),
-                      // Water + Sleep row. IntrinsicHeight keeps the two
-                      // cards the same height even though the water card
-                      // has extra button rows underneath the bar.
-                      IntrinsicHeight(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Expanded(
-                              child: NextUpGlow(
-                                active: nextUp == _DailyItem.water,
-                                color: const Color(0xFF5B9BD5),
-                                child: PaidWaterCard(dashboard: dashboard),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: NextUpGlow(
-                                active: nextUp == _DailyItem.sleep,
-                                color: const Color(0xFF6D6DC5),
-                                child: PaidSleepCard(dashboard: dashboard),
-                              ),
-                            ),
-                          ],
-                        ),
+                      KeyedSubtree(
+                        key: _statsKey,
+                        child: PaidStatsRow(dashboard: dashboard),
                       ),
-                      const SizedBox(height: 8),
-                      PaidStatsRow(dashboard: dashboard),
                       const SizedBox(height: 8),
                       // Meals now lives in the stats row above (with
                       // calories), so the cycle card has this row to itself.

@@ -4,7 +4,9 @@ import 'package:get/get.dart';
 import '../../data/controllers/paid_home_controller/paid_home_controller.dart';
 import '../../data/models/home_dashboard/home_dashboard_model.dart';
 import '../new_home/phase_theme.dart';
-import 'sleep_log_modal.dart';
+import 'dart:async';
+
+import 'quick_amount_sheet.dart';
 
 /// Sleep card: three quick-log presets (6h / 7h / 8h) + tap-card to open
 /// the full slider modal for a custom value.
@@ -15,7 +17,14 @@ import 'sleep_log_modal.dart';
 class PaidSleepCard extends StatefulWidget {
   final HomeDashboardModel dashboard;
 
-  const PaidSleepCard({Key? key, required this.dashboard}) : super(key: key);
+  /// Inside the "Today's insights" box: lighter border, no shadow.
+  final bool embedded;
+
+  /// Opened from a tile in the box: keep the buttons open even after
+  /// the goal is reached.
+  final bool alwaysShowButtons;
+
+  const PaidSleepCard({Key? key, required this.dashboard, this.embedded = false, this.alwaysShowButtons = false}) : super(key: key);
 
   @override
   State<PaidSleepCard> createState() => _PaidSleepCardState();
@@ -24,8 +33,26 @@ class PaidSleepCard extends StatefulWidget {
 class _PaidSleepCardState extends State<PaidSleepCard> {
   final PaidHomeController _controller = Get.find<PaidHomeController>();
 
-  Future<void> _onQuickLog(double hours) async {
-    if (_controller.isSavingSleep.value) return;
+  /// After the goal the chips fold away; "Change ›" opens them again.
+  bool _editing = false;
+  Timer? _foldTimer;
+
+  @override
+  void dispose() {
+    _foldTimer?.cancel();
+    super.dispose();
+  }
+
+  void _openEdit() {
+    _foldTimer?.cancel();
+    setState(() => _editing = true);
+    _foldTimer = Timer(const Duration(seconds: 6), () {
+      if (mounted) setState(() => _editing = false);
+    });
+  }
+
+  Future<bool> _onQuickLog(double hours) async {
+    if (_controller.isSavingSleep.value) return false;
 
     // Capture pre-log values to detect the goal-reached transition —
     // mirrors PaidWaterCard._onTap.
@@ -36,7 +63,7 @@ class _PaidSleepCardState extends State<PaidSleepCard> {
         target != null && target > 0 && (prevHours == null || prevHours < target);
 
     final success = await _controller.logSleep(hours);
-    if (!mounted) return;
+    if (!mounted) return success;
 
     if (!success) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -45,7 +72,13 @@ class _PaidSleepCardState extends State<PaidSleepCard> {
           duration: Duration(seconds: 2),
         ),
       );
-      return;
+      return false;
+    }
+    if (_editing) {
+      _foldTimer?.cancel();
+      _foldTimer = Timer(const Duration(milliseconds: 900), () {
+        if (mounted) setState(() => _editing = false);
+      });
     }
 
     if (wasUnderGoal) {
@@ -54,13 +87,27 @@ class _PaidSleepCardState extends State<PaidSleepCard> {
         showSleepGoalReachedDialog(context);
       }
     }
+    return true;
   }
 
+  /// The › (or a tap on the card): any time from 4h to 12h.
   void _openModal() {
-    SleepLogModal.show(
-      context: context,
-      dashboard: widget.dashboard,
-      initialHours: widget.dashboard.sleep?.hoursToday,
+    final theme = PhaseTheme.forPhaseString(widget.dashboard.cycle?.phase);
+    QuickAmountSheet.show(
+      context,
+      QuickAmountSheet(
+        title: 'How long did you sleep?',
+        subtitle: 'Last night',
+        presets: const [5, 6, 6.5, 7, 7.5, 8, 9],
+        initial: widget.dashboard.sleep?.hoursToday ?? 7,
+        min: 4,
+        max: 12,
+        step: 0.5,
+        buttonLabel: 'Save',
+        accent: theme.accent,
+        format: (v) => '${_formatHours(v)}h',
+        onSave: _onQuickLog,
+      ),
     );
   }
 
@@ -82,8 +129,8 @@ class _PaidSleepCardState extends State<PaidSleepCard> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFD8EDD4), width: 1),
-          boxShadow: [
+          border: Border.all(color: widget.embedded ? const Color(0xFFE3EFE0) : const Color(0xFFD8EDD4), width: 1),
+          boxShadow: widget.embedded ? null : [
             BoxShadow(
               color: const Color(0xFF163220).withOpacity(0.05),
               offset: const Offset(0, 2),
@@ -147,11 +194,32 @@ class _PaidSleepCardState extends State<PaidSleepCard> {
                 ),
               ),
             ],
+            // One kind line once she has logged: green at or above her
+            // goal, soft amber and matched to her cycle phase below it.
+            if (hasHours && hasTarget) ...[
+              const SizedBox(height: 5),
+              _SleepNote(
+                good: (hoursToday ?? 0) >= (targetHours ?? 0),
+                text: (hoursToday ?? 0) >= (targetHours ?? 0)
+                    ? 'Well rested 💚'
+                    : _underGoalLine(widget.dashboard.cycle?.phase,
+                        widget.dashboard.cycle?.cycleDay != null),
+              ),
+            ],
             const SizedBox(height: 8),
             // ── Spacer keeps buttons at the bottom ──
             const Spacer(),
-            // ── Quick-log preset buttons ──
-            _buildButtonRow(theme, hoursToday),
+            // ── Quick-log preset buttons, or once her goal is met one
+            // small "✓ Logged · Change ›" line so the card gets shorter ──
+            if (hasHours && hasTarget && hoursToday! >= targetHours! && !_editing && !widget.alwaysShowButtons)
+              CardDoneLine(
+                done: '✓ Logged',
+                action: 'Change ›',
+                color: theme.accent,
+                onTap: _openEdit,
+              )
+            else
+              _buildButtonRow(theme, hoursToday),
           ],
         ),
       ),
@@ -187,6 +255,19 @@ class _PaidSleepCardState extends State<PaidSleepCard> {
             size: 14, color: const Color(0xFF6D6DC5).withOpacity(0.55)),
       ],
     );
+  }
+
+  /// Short, kind line when she slept less than her goal.
+  static String _underGoalLine(String? phase, bool hasCycle) {
+    if (!hasCycle) return 'Try an early night 🌙';
+    switch (parseCyclePhase(phase).name) {
+      case 'menstrual':
+        return 'Rest well tonight 🌙';
+      case 'luteal':
+        return 'Rest a little more 🌙';
+      default:
+        return 'Try an early night 🌙';
+    }
   }
 
   static String _formatHours(double h) =>
@@ -236,6 +317,27 @@ class _PaidSleepCardState extends State<PaidSleepCard> {
     });
   }
 
+}
+
+class _SleepNote extends StatelessWidget {
+  final bool good;
+  final String text;
+  const _SleepNote({required this.good, required this.text});
+
+  /// One line, same style as the water card's "Goal reached!" line.
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: 9,
+        fontWeight: FontWeight.w600,
+        color: good ? const Color(0xFF6DC55A) : const Color(0xFFC8893A),
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

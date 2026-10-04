@@ -1,0 +1,2097 @@
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+
+import 'package:fitness_zone_2/UI/auth_module/result_screen.dart' show openWhatsAppChat;
+import 'package:fitness_zone_2/UI/auth_module/sign_up_screen/goal_screen.dart';
+import 'package:fitness_zone_2/UI/auth_module/sign_up_screen/sign_up_screen_questions.dart';
+import 'package:fitness_zone_2/UI/auth_module/cycle_settings_screen.dart';
+import 'package:fitness_zone_2/data/controllers/auth_controller/auth_controller.dart';
+import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.dart';
+import 'package:fitness_zone_2/data/controllers/motivation_controller/motivation_controller.dart';
+import 'package:fitness_zone_2/UI/dashboard_module/profile_screen/notification_settings_screen.dart';
+import 'package:fitness_zone_2/UI/dashboard_module/profile_screen/personal_details_screen.dart';
+import 'package:fitness_zone_2/UI/dashboard_module/profile_screen/my_reports_screen.dart';
+import 'package:fitness_zone_2/UI/support/report_issue_screen.dart';
+import 'package:fitness_zone_2/UI/plans_module/all_plans.dart';
+import 'package:fitness_zone_2/data/Repos/cycle_repo/cycle_data_repository.dart';
+import 'package:fitness_zone_2/data/Repos/plan_freeze_repo/plan_freeze_repository.dart';
+import 'package:fitness_zone_2/data/Repos/user_plan_repo/user_plan_repository.dart';
+import 'package:fitness_zone_2/widgets/v2/cancel_plan_dialog.dart';
+import 'package:fitness_zone_2/data/controllers/paid_home_controller/paid_home_controller.dart';
+import 'package:fitness_zone_2/data/services/cycle_engine.dart';
+import 'package:fitness_zone_2/values/constants.dart';
+import 'package:fitness_zone_2/widgets/new_home/phase_theme.dart';
+
+/// Profile screen — rebuilt to match `new screens/Profile_Final_3Screens.html`
+/// V1 design (mint hero with avatar + day/phase chip, overlapping stats
+/// card, dark subscription card, weekly-progression attendance, menu list,
+/// sign-out).
+///
+/// API contract preserved exactly: every `authController.*` reference, the
+/// cycle-phase fetch, the "Update Details" navigation flow, the logout /
+/// delete dialogs, and the notification-settings route are all untouched.
+/// Stats / Attendance / Member-since use placeholders today — backend
+/// endpoints to ship later.
+class ProfileScreenUser extends StatefulWidget {
+  const ProfileScreenUser({super.key});
+
+  @override
+  State<ProfileScreenUser> createState() => _ProfileScreenUserState();
+}
+
+class _ProfileScreenUserState extends State<ProfileScreenUser> {
+  final AuthController authController = Get.find();
+
+  // Cache the cycle-phase fetch so the FutureBuilder doesn't re-fire on
+  // every rebuild. The chip would briefly flash through its loading state
+  // (an empty SizedBox) every time the screen rebuilt, which made it look
+  // like the phase wasn't displaying at all.
+  late Future<Map<String, dynamic>?> _phaseFuture = _fetchCyclePhase();
+
+  // Tracks the freeze sheet's local "selected days" state without forcing
+  // a full screen rebuild — only the sheet's StatefulBuilder reads it.
+  int _freezeSelectedDays = 7;
+  // "Her own choice" flexibility Shaista asked for, alongside the fixed
+  // 7/14/30 presets -- true means the sheet's custom text field is the
+  // active source of the freeze duration instead of a preset chip.
+  bool _freezeCustomSelected = false;
+  bool _freezeBusy = false;
+  bool _cancellingPlan = false;
+
+  // GET /users/plan/freeze-status — drives the "Active" vs "Paused" pill,
+  // whether the freeze button reads "Freeze plan" or "Unfreeze my plan",
+  // and whether "Cancel plan" is allowed to run at all. This screen never
+  // fetched freeze status before; it always assumed "Active, not frozen",
+  // which is why the freeze/unfreeze button never reflected reality.
+  Map<String, dynamic>? _freezeStatus;
+
+  bool get _isFrozen => _freezeStatus?['isFrozen'] == true;
+  // Freeze status is fetched fresh on every screen open (see
+  // initState/_fetchFreezeStatus) — before that call resolves, we
+  // don't yet know whether the plan is frozen. Used to keep the
+  // pill/buttons from ever confidently showing the wrong state (e.g.
+  // "ACTIVE" + a live "Freeze plan" button) for an already-paused
+  // plan during that brief window.
+  bool get _freezeStatusKnown => _freezeStatus != null;
+
+  int? get _freezeStatusUserPlanId {
+    final v = _freezeStatus?['userPlanId'];
+    if (v == null) return null;
+    return v is int ? v : int.tryParse(v.toString());
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchFreezeStatus();
+    _fetchAttendanceStats();
+  }
+
+  void _fetchAttendanceStats() {
+    try {
+      final mc = Get.isRegistered<MotivationController>()
+          ? Get.find<MotivationController>()
+          : null;
+      if (mc != null && !mc.isLoadingStats.value) {
+        mc.fetchMotivationStats();
+      }
+    } catch (_) {
+      // Best-effort — attendance card falls back to placeholders or empty
+    }
+  }
+
+  Future<void> _fetchFreezeStatus() async {
+    try {
+      final token =
+          authController.sharedPreferences.getString(Constants.accessToken) ??
+              '';
+      final res = await Get.find<PlanFreezeRepository>()
+          .getStatus(accessToken: token);
+      if (res.body != null &&
+          res.body['status'] == '1' &&
+          res.body['data'] is Map) {
+        if (mounted) {
+          setState(() {
+            _freezeStatus = Map<String, dynamic>.from(res.body['data']);
+          });
+        }
+      }
+    } catch (_) {
+      // Best-effort — the card falls back to showing "Active" / a plain
+      // "Freeze plan" button, same as before this existed, rather than
+      // blocking the rest of the screen from rendering.
+    }
+  }
+
+  // Unpaid (status == false) users see a stripped-down profile: no stats,
+  // no subscription card, no attendance — just identity + an "Explore
+  // plans" CTA + the menu. They have nothing to show on those surfaces yet.
+  bool get _isPaid => authController.logInUser?.status == true;
+
+  // ─── API-touching helpers (UNCHANGED — do not modify) ──────────────────
+
+  void _showLogoutDialog(BuildContext context, TextTheme textTheme) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text("Log Out", style: textTheme.headlineSmall),
+        content: Text("Are you sure you want to logout?",
+            style: textTheme.bodyMedium),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(),
+            child: Text("Cancel", style: textTheme.bodyMedium),
+          ),
+          TextButton(
+            onPressed: () => authController.logout(),
+            child: Text("Logout", style: textTheme.bodyMedium),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showDeleteDialog() {
+    Get.defaultDialog(
+      title: "Alert",
+      content: const Text("Do you really want to delete your account?"),
+      onConfirm: () {
+        Get.back();
+        authController.deleteUser();
+      },
+      onCancel: () {},
+    );
+  }
+
+  Future<Map<String, dynamic>?> _fetchCyclePhase() async {
+    // 1. Prefer the paid-home dashboard — server already computes phase +
+    //    day there, so no fetch + no parsing risk. Works whenever the
+    //    paid home has loaded at least once this session.
+    if (Get.isRegistered<PaidHomeController>()) {
+      final dash = Get.find<PaidHomeController>().dashboard.value;
+      final card = dash?.cycleCard;
+      if (card != null &&
+          card.phase != null &&
+          card.phase!.isNotEmpty &&
+          card.cycleDay != null) {
+        return {'phase': card.phase!, 'day': card.cycleDay!};
+      }
+    }
+
+    // 2. Fall back to the direct CycleDataRepository call. Lenient on
+    //    `dataProvided` (backends have shipped this as int 1, bool true,
+    //    and string "1" at different times) and tolerant of parse errors.
+    try {
+      final repo = Get.find<CycleDataRepository>();
+      final token =
+          authController.sharedPreferences.getString(Constants.accessToken) ??
+              '';
+      final response = await repo.getCycleData(accessToken: token);
+      final body = response.body;
+      if (body == null || body['status'] != '1' || body['data'] == null) {
+        return null;
+      }
+      final data = body['data'];
+      final provided = data['dataProvided'];
+      final hasProvided =
+          provided == 1 || provided == true || provided == '1';
+      final last = data['lastPeriodDate'];
+      if (!hasProvided || last == null) return null;
+      final cycleInfo = CycleEngine.calculate(
+        lastPeriodDate: DateTime.parse(last.toString()),
+        cycleLength: data['averageCycleLength'] ?? 28,
+      );
+      if (cycleInfo != null) {
+        return {'phase': cycleInfo.phase, 'day': cycleInfo.cycleDay};
+      }
+    } catch (_) {
+      // Network blip / parse error — show the "Add cycle data" CTA so the
+      // user has a path forward instead of a silent failure.
+    }
+    return null;
+  }
+
+  // ─── Design tokens (from Profile_Final_3Screens.html V1) ───────────────
+
+  static const _kCanvas = Color(0xFFF9FCF7);
+  static const _kMintHero = Color(0xFFE8F4E0);
+  static const _kMintRingA = Color(0xFFC8E8BC);
+  static const _kMintRingB = Color(0xFFD4EBC4);
+  static const _kCardBg = Colors.white;
+  static const _kCardBorder = Color(0xFFEFF4EC);
+  static const _kIconWashBg = Color(0xFFF6FBF3);
+  static const _kTextPrimary = Color(0xFF1A3A22);
+  static const _kTextMuted = Color(0xFF5A7258);
+  static const _kSage = Color(0xFF7A8C78);
+  static const _kAccent = Color(0xFF6DC55A);
+  static const _kAccentSoft = Color(0xFFA8F0C0);
+  static const _kHeroDark = Color(0xFF1A3A22);
+  static const _kStreak = Color(0xFFFAC775);
+  static const _kDanger = Color(0xFFD85A30);
+  static const _kFrozenBlue = Color(0xFF4A8FB8);
+  // Softer, two-tone version of _kHeroDark for the subscription card only
+  // — Shaista flagged the flat, fully-saturated _kHeroDark fill as "too
+  // sharp" on that specific card. Scoped here rather than changing
+  // _kHeroDark itself, which also colors the profile hero header, the
+  // streak card, and the freeze-sheet day chips elsewhere in this file —
+  // none of those were flagged, so they're left untouched.
+  static const _kPlanCardGradient = [Color(0xFF224A38), Color(0xFF14291F)];
+  // Warm coral instead of _kDanger's orange-red — reads calmer against
+  // the dark green card than the vivid tone _kDanger uses elsewhere in
+  // this screen (which sits on light backgrounds, e.g. delete-account).
+  static const _kCancelOnDark = Color(0xFFE8896A);
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Scaffold(
+      backgroundColor: _kCanvas,
+      body: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.zero,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _heroBlock(context),
+            // Everything below shifts up 30px so the stats card visually
+            // overlaps the mint hero by 30 — matches the HTML mockup's
+            // `margin:-30px 20px 16px` on the stats card. We compensate
+            // for the layout-vs-visual offset with the final SizedBox.
+            Transform.translate(
+              offset: const Offset(0, -30),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                // Obx observes userHomeLoad + trialLoad so the cards rebuild
+                // once API calls finish — otherwise userHomeData/trialJourney
+                // are null at first render and expiry/amount show "—" forever.
+                child: Obx(() {
+                  // Touch reactive flags so GetX subscribes this Obx.
+                  // Actual data is read from the plain fields inside each
+                  // _xxxCard() method; the Rx flags are just the trigger.
+                  if (Get.isRegistered<HomeController>()) {
+                    final hc = Get.find<HomeController>();
+                    hc.userHomeLoad.value;
+                    hc.trialLoad.value;
+                  }
+                  if (Get.isRegistered<MotivationController>()) {
+                    Get.find<MotivationController>().motivationStats.value;
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (_isPaid) ...[
+                        _statsCard(),
+                        const SizedBox(height: 16),
+                        _subscriptionCard(),
+                        const SizedBox(height: 16),
+                        _attendanceCard(),
+                      ] else
+                        _explorePlansCard(),
+                      const SizedBox(height: 16),
+                      _menuCard(context, textTheme),
+                      const SizedBox(height: 12),
+                      _signOutLink(context, textTheme),
+                      // 30 to compensate for the -30 transform above so
+                      // scroll content doesn't end 30px short.
+                      const SizedBox(height: 40),
+                    ],
+                  );
+                }),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Hero block (mint bg, status-bar safe, rounded bottom) ─────────────
+  Widget _heroBlock(BuildContext context) {
+    final topInset = MediaQuery.of(context).padding.top;
+    return Container(
+      decoration: const BoxDecoration(
+        color: _kMintHero,
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(32),
+          bottomRight: Radius.circular(32),
+        ),
+      ),
+      child: Stack(
+        clipBehavior: Clip.hardEdge,
+        children: [
+          // Decorative ring top-right (mint mockup detail).
+          Positioned(
+            top: -40,
+            right: -40,
+            child: Container(
+              width: 160,
+              height: 160,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: _kMintRingA,
+              ),
+              foregroundDecoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _kMintRingA.withOpacity(0.5),
+              ),
+            ),
+          ),
+          // Decorative ring bottom-left.
+          Positioned(
+            bottom: -20,
+            left: -30,
+            child: Container(
+              width: 120,
+              height: 120,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: _kMintRingB,
+              ),
+              foregroundDecoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _kMintRingB.withOpacity(0.5),
+              ),
+            ),
+          ),
+          // Content — status bar safe.
+          Padding(
+            padding: EdgeInsets.only(top: topInset),
+            child: Column(
+              children: [
+                _topBar(),
+                const SizedBox(height: 4),
+                _heroIdentity(),
+                // 50px of mint bg below the chip → the stats card's
+                // Transform(-30) overlays the bottom 30 of this padding.
+                const SizedBox(height: 50),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _topBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+      child: Row(
+        children: [
+          _circleIconButton(
+            icon: Icons.arrow_back,
+            onTap: () => Get.back(),
+          ),
+          const Spacer(),
+          const Text(
+            'Profile',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: _kTextPrimary,
+            ),
+          ),
+          const Spacer(),
+          _circleIconButton(
+            icon: Icons.settings_outlined,
+            onTap: () =>
+                Get.to(() => const NotificationSettingsScreen()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _circleIconButton({
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 40,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: _kTextPrimary.withOpacity(0.05),
+              offset: const Offset(0, 2),
+              blurRadius: 6,
+            ),
+          ],
+        ),
+        child: Icon(icon, size: 16, color: _kTextPrimary),
+      ),
+    );
+  }
+
+  // Avatar + name + member-since + day/phase chip.
+  Widget _heroIdentity() {
+    final firstName = authController.editFirstName.text.trim();
+    final lastName = authController.editLastName.text.trim();
+    final fullName =
+        [firstName, lastName].where((s) => s.isNotEmpty).join(' ').trim();
+    final initial = (firstName.isNotEmpty
+            ? firstName[0]
+            : (lastName.isNotEmpty ? lastName[0] : 'U'))
+        .toUpperCase();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(
+        children: [
+          _avatarWithBadge(initial),
+          const SizedBox(height: 16),
+          Text(
+            fullName.isEmpty ? 'My Profile' : fullName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              color: _kTextPrimary,
+              letterSpacing: -0.2,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            // Placeholder — backend doesn't surface User.createdAt on the
+            // LoginModel today. Wire through when available.
+            'Member',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 13,
+              color: _kTextMuted,
+            ),
+          ),
+          const SizedBox(height: 14),
+          _phaseChip(),
+        ],
+      ),
+    );
+  }
+
+  Widget _avatarWithBadge(String initial) {
+    return SizedBox(
+      width: 92,
+      height: 92,
+      child: Stack(
+        children: [
+          // Avatar — initial inside a gradient circle with white border.
+          Container(
+            width: 92,
+            height: 92,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [_kAccent, _kAccentSoft],
+              ),
+              border: Border.all(color: Colors.white, width: 4),
+              boxShadow: [
+                BoxShadow(
+                  color: _kTextPrimary.withOpacity(0.12),
+                  offset: const Offset(0, 8),
+                  blurRadius: 24,
+                ),
+              ],
+            ),
+            child: Text(
+              initial,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 32,
+                fontWeight: FontWeight.w800,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          // Camera badge — bottom-right. Hooked to the existing
+          // Update-Details flow so users can change their profile data.
+          Positioned(
+            bottom: 0,
+            right: 0,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => Get.to(() => GoalScreen(
+                    showBackButton: true,
+                    initialGoal:
+                        Get.find<AuthController>().mainGoal.value,
+                    onNext: (goal) {
+                      Get.off(() =>
+                          SignUpScreenQuestions(selectedGoal: goal));
+                    },
+                  )),
+              child: Container(
+                width: 28,
+                height: 28,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _kHeroDark,
+                  border: Border.all(color: _kMintHero, width: 3),
+                ),
+                child: const Icon(
+                  Icons.edit_outlined,
+                  color: Colors.white,
+                  size: 12,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _phaseChip() {
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: _phaseFuture,
+      builder: (_, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return const SizedBox(height: 30);
+        }
+        if (snap.data == null) {
+          // No cycle data yet — tap navigates to CycleSettingsScreen to add it.
+          return _chip(
+            text: 'Add cycle data',
+            icon: Icons.add_circle_outline,
+            onTap: _openCycleSettings,
+          );
+        }
+        final phase = snap.data!['phase'] as String;
+        final day = snap.data!['day'] as int;
+        final theme = PhaseTheme.forPhaseString(phase);
+        final label = 'Day $day · ${theme.phaseLabel} ${theme.emoji}';
+        return _chip(
+          text: label,
+          onTap: _openCycleSettings,
+        );
+      },
+    );
+  }
+
+  Future<void> _openCycleSettings() async {
+    await Get.to(() => const CycleSettingsScreen());
+    if (mounted) {
+      setState(() {
+        _phaseFuture = _fetchCyclePhase();
+      });
+    }
+  }
+
+  Widget _chip({required String text, IconData? icon, VoidCallback? onTap}) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(100),
+          border: Border.all(color: _kMintRingA, width: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 12, color: _kAccent),
+              const SizedBox(width: 6),
+            ] else ...[
+              Container(
+                width: 6,
+                height: 6,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _kAccent,
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              text,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: _kTextPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Stats card (3 columns, overlaps hero by -30) ──────────────────────
+  Widget _statsCard() {
+    final mc = Get.isRegistered<MotivationController>()
+        ? Get.find<MotivationController>()
+        : null;
+    final stats = mc?.motivationStats.value;
+
+    final classesStr = stats != null ? '${stats.daysAttendedLast30}' : '—';
+    final streakStr = stats != null ? '${stats.streak} 🔥' : '— 🔥';
+    final workoutsStr = stats != null ? '${stats.daysAttendedLast30}' : '—';
+
+    return _card(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      child: Row(
+        children: [
+          Expanded(child: _statColumn(value: classesStr, label: 'Classes')),
+          _statDivider(),
+          Expanded(
+            child: _statColumn(
+              value: streakStr,
+              label: 'Streak',
+              valueColor: _kStreak,
+            ),
+          ),
+          _statDivider(),
+          Expanded(
+            child: _statColumn(
+              value: workoutsStr,
+              label: 'Workouts',
+              valueColor: _kAccent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statColumn({
+    required String value,
+    required String label,
+    Color? valueColor,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            color: valueColor ?? _kTextPrimary,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: const TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: _kSage,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statDivider() => Container(
+        width: 1,
+        height: 36,
+        color: _kCardBorder,
+      );
+
+  // ─── Explore-plans card (shown to unpaid users in place of the
+  //     subscription card). Two modes:
+  //   • Trial active  → shows trial status + expiry date + days remaining.
+  //   • No trial yet  → generic "Explore plans" CTA.
+  Widget _explorePlansCard() {
+    final auth = Get.find<AuthController>();
+    final home = Get.isRegistered<HomeController>() ? Get.find<HomeController>() : null;
+    final trialActive = auth.trialActivated.value;
+
+    // Trial expiry from trialJourney.startedAt and the server's trial length.
+    DateTime? trialEndsAt;
+    int? trialDaysLeft;
+    if (trialActive && home != null) {
+      final rawStart = home.trialJourney?['startedAt'];
+      if (rawStart != null) {
+        final startedAt = DateTime.tryParse(rawStart.toString());
+        if (startedAt != null) {
+          trialEndsAt = startedAt.add(home.kTrialLength);
+          final hours = trialEndsAt.difference(DateTime.now()).inHours;
+          trialDaysLeft = hours > 0 ? (hours / 24).ceil() : 0;
+        }
+      }
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _kHeroDark,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            trialActive ? 'FREE TRIAL' : 'YOUR PLAN',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: trialActive ? _kAccent : Colors.white.withOpacity(0.5),
+              letterSpacing: 1.0,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            trialActive ? '3-Day Free Trial' : 'Explore plans',
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              color: Colors.white,
+            ),
+          ),
+          if (trialActive && trialEndsAt != null) ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: Colors.white.withOpacity(0.08)),
+                  bottom: BorderSide(color: Colors.white.withOpacity(0.08)),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _subRowLabelled(
+                      label: 'Expires',
+                      value: _formatShortDate(trialEndsAt),
+                    ),
+                  ),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: _subRowLabelled(
+                        label: 'Days left',
+                        value: trialDaysLeft != null
+                            ? (trialDaysLeft! > 0
+                                ? '$trialDaysLeft day${trialDaysLeft == 1 ? '' : 's'}'
+                                : 'Ended')
+                            : '—',
+                        alignRight: true,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else if (!trialActive) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Unlock phase-matched live classes, AI insights, and your hormonal dashboard.',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 12,
+                height: 1.5,
+                color: Colors.white.withOpacity(0.7),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          _subscriptionPrimaryButton(
+            trialActive ? 'Upgrade to a plan →' : 'Browse plans →',
+            onTap: () => Get.to<dynamic>(() => OurPlansScreen()),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Subscription card (dark) ──────────────────────────────────────────
+  Widget _subscriptionCard() {
+    final homeController = Get.isRegistered<HomeController>()
+        ? Get.find<HomeController>()
+        : null;
+    final plans = homeController?.userHomeData?.userAllPlans ?? const [];
+    final plan = plans.isNotEmpty ? plans.first : null;
+    final planName = plan?.title ?? 'FitHer Plus';
+    // Some users have priceData populated, others only the flat `price`
+    // field (string). Fall through both before giving up — was showing
+    // "—" for users with `plan.price = "3500"` and null priceData.
+    String _amount() {
+      if (plan == null) return '—';
+      final p1 = plan.priceData?.priceAmount;
+      if (p1 != null && p1.trim().isNotEmpty && p1 != 'N/A') {
+        return 'PKR $p1';
+      }
+      final p2 = plan.price.trim();
+      if (p2.isNotEmpty && p2 != 'null' && p2 != '0') {
+        return 'PKR $p2';
+      }
+      return '—';
+    }
+    final amountText = _amount();
+    final nextBilling = plan?.expireDate;
+    final nextBillingText = nextBilling != null
+        ? _formatShortDate(nextBilling)
+        : '—';
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: _kPlanCardGradient,
+        ),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'CURRENT PLAN',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white.withOpacity(0.5),
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      planName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _activePill(),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: Colors.white.withOpacity(0.08)),
+                bottom: BorderSide(color: Colors.white.withOpacity(0.08)),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _subRowLabelled(
+                    label: 'Next billing',
+                    value: nextBillingText,
+                  ),
+                ),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: _subRowLabelled(
+                      label: 'Amount',
+                      value: amountText,
+                      alignRight: true,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _subscriptionSecondaryButton(
+                  // Toggles with freeze state — used to always say
+                  // "Freeze plan" even while already frozen, which just
+                  // reopened the same day-picker sheet on a plan that was
+                  // already paused.
+                  _isFrozen ? 'Unfreeze my plan' : 'Freeze plan',
+                  icon: _isFrozen ? '▶' : '❄',
+                  // The play icon reads as "resume" — colored to match
+                  // the blue used everywhere else for the paused state
+                  // (the PAUSED pill, _kFrozenBlue) rather than plain
+                  // white, so the icon itself signals which flow you're
+                  // in at a glance.
+                  iconColor: _isFrozen ? _kFrozenBlue : null,
+                  // Disabled until we actually know the real freeze
+                  // state — otherwise a plan that's already paused could
+                  // briefly show a live "Freeze plan" button during the
+                  // fetch and let someone tap it before it flips.
+                  onTap: !_freezeStatusKnown
+                      ? null
+                      : (_isFrozen ? _showUnfreezeDialog : _showFreezeSheet),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _subscriptionPrimaryButton(
+                  'Manage',
+                  // "Manage" opens the existing plan-selection flow:
+                  // OurPlansScreen → plan pick → payment options (manual
+                  // upload or online) — the same path used elsewhere in
+                  // the app (paywall, plans timeline banner, etc.).
+                  onTap: () => Get.to<dynamic>(() => OurPlansScreen()),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              // A frozen plan can't be cancelled from here — unfreeze it
+              // first. Kept tappable rather than fully disabled so tapping
+              // it while frozen still explains why, instead of just doing
+              // nothing (same reasoning as the freeze sheet's own
+              // blockedReason pattern elsewhere in this codebase).
+              onPressed: (_cancellingPlan || !_freezeStatusKnown)
+                  ? null
+                  : (_isFrozen ? _explainCancelBlockedByFreeze : _showCancelPlanFlow),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: _cancellingPlan
+                  ? const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(_kCancelOnDark),
+                      ),
+                    )
+                  : Text(
+                      'Cancel plan',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: _isFrozen
+                            ? _kCancelOnDark.withOpacity(0.45)
+                            : _kCancelOnDark,
+                      ),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _activePill() {
+    // Was hardcoded to "ACTIVE" always — this screen never knew about
+    // freeze state before. Now reflects _freezeStatus (see
+    // _fetchFreezeStatus), same blue used for "paused" everywhere else
+    // in the app (v2_assigned_plan_card.dart's _kFrozenBlue). While the
+    // fetch is still in flight (_freezeStatusKnown == false), show a
+    // neutral sage dot rather than confidently claiming "ACTIVE" for a
+    // plan that might actually be paused.
+    final frozen = _isFrozen;
+    final color = !_freezeStatusKnown
+        ? _kSage
+        : (frozen ? _kFrozenBlue : _kAccent);
+    final label = !_freezeStatusKnown ? '···' : (frozen ? 'PAUSED' : 'ACTIVE');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(100),
+        border: Border.all(color: color.withOpacity(0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              color: color,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _subRowLabelled({
+    required String label,
+    required String value,
+    bool alignRight = false,
+  }) {
+    return Column(
+      crossAxisAlignment:
+          alignRight ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 10,
+            color: Colors.white.withOpacity(0.5),
+          ),
+        ),
+        const SizedBox(height: 1),
+        Text(
+          value,
+          style: const TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _subscriptionSecondaryButton(
+    String label, {
+    VoidCallback? onTap,
+    String? icon,
+    Color? iconColor,
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        height: 40,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(color: Colors.white.withOpacity(0.15)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Text(
+                icon,
+                style: TextStyle(fontSize: 12, color: iconColor ?? Colors.white),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              label,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _subscriptionPrimaryButton(String label, {VoidCallback? onTap}) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        height: 40,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: _kAccent,
+          borderRadius: BorderRadius.circular(11),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─── Attendance card (weekly progression bars) ─────────────────────────
+  Widget _attendanceCard() {
+    final mc = Get.isRegistered<MotivationController>()
+        ? Get.find<MotivationController>()
+        : null;
+    final stats = mc?.motivationStats.value;
+    final history = stats?.attendanceHistory ?? [];
+
+    int countAttended(int startIdx, int endIdx) {
+      if (history.isEmpty) return 0;
+      final start = startIdx.clamp(0, history.length);
+      final end = endIdx.clamp(start, history.length);
+      int count = 0;
+      for (int i = start; i < end; i++) {
+        if (history[i].attended == 1) count++;
+      }
+      return count;
+    }
+
+    final hLen = history.length;
+    final thisWkCompleted = countAttended(hLen - 7, hLen);
+    final week3Completed = countAttended(hLen - 14, hLen - 7);
+    final week2Completed = countAttended(hLen - 21, hLen - 14);
+    final week1Completed = countAttended(hLen - 28, hLen - 21);
+
+    final weeks = <_WeekRow>[
+      _WeekRow(label: 'Week 1', completed: week1Completed, target: 7),
+      _WeekRow(label: 'Week 2', completed: week2Completed, target: 7),
+      _WeekRow(label: 'Week 3', completed: week3Completed, target: 7),
+      _WeekRow(label: 'This wk', completed: thisWkCompleted, target: 7),
+    ];
+    return _card(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'ATTENDANCE',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: _kSage,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      stats != null
+                          ? '${stats.daysAttendedLast30} of 30 days'
+                          : '— of 30 days',
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: _kTextPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _kIconWashBg,
+                  borderRadius: BorderRadius.circular(100),
+                ),
+                child: Text(
+                  stats != null ? '${stats.regularityPercentage}%' : '—%',
+                  style: const TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: _kAccent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          for (int i = 0; i < weeks.length; i++) ...[
+            _weekBar(weeks[i]),
+            if (i < weeks.length - 1) const SizedBox(height: 10),
+          ],
+          const SizedBox(height: 14),
+          Container(height: 1, color: _kCardBorder),
+          const SizedBox(height: 12),
+          const Text(
+            'Track each week of activity',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 11,
+              color: _kSage,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _weekBar(_WeekRow row) {
+    final pct = row.target == 0
+        ? 0.0
+        : (row.completed / row.target).clamp(0.0, 1.0).toDouble();
+    return Row(
+      children: [
+        SizedBox(
+          width: 48,
+          child: Text(
+            row.label,
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: _kSage,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Container(
+            height: 8,
+            decoration: BoxDecoration(
+              color: _kCardBorder,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FractionallySizedBox(
+                widthFactor: pct,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: _kAccent,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        SizedBox(
+          width: 30,
+          child: Text(
+            '${row.completed}/${row.target}',
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: _kTextPrimary,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ─── Menu list (4 rows: Personal details, Notifications, Reports, Help) ─
+  Widget _menuCard(BuildContext context, TextTheme textTheme) {
+    final rows = <_MenuItem>[
+      _MenuItem(
+        icon: Icons.person_outline,
+        label: 'Personal details',
+        onTap: () => Get.to(() => PersonalDetailsScreen()),
+      ),
+      _MenuItem(
+        icon: Icons.notifications_none,
+        label: 'Notifications',
+        onTap: () => Get.to(() => const NotificationSettingsScreen()),
+      ),
+      _MenuItem(
+        icon: Icons.description_outlined,
+        label: 'My reports',
+        onTap: () => Get.to(() => const MyReportsScreen()),
+      ),
+      _MenuItem(
+        icon: Icons.report_problem_outlined,
+        label: 'Report an issue',
+        onTap: () => Get.to(() => const ReportIssueScreen()),
+      ),
+      _MenuItem(
+        icon: Icons.help_outline,
+        label: 'Help centre',
+        // Same admin WhatsApp number used by result_screen.dart's contact
+        // CTA — keep the number in one place until we add a config var.
+        onTap: () => _showHelpSheet(context, textTheme),
+      ),
+    ];
+
+    return _card(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+      child: Column(
+        children: [
+          for (int i = 0; i < rows.length; i++) ...[
+            _menuRow(rows[i]),
+            if (i < rows.length - 1)
+              Container(height: 1, color: _kCardBorder),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _menuRow(_MenuItem item) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: item.onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
+        child: Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _kIconWashBg,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(item.icon, size: 14, color: _kAccent),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                item.label,
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: _kTextPrimary,
+                ),
+              ),
+            ),
+            const Icon(Icons.chevron_right, size: 14, color: Color(0xFFC8DEC4)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ─── Freeze sheet (pause plan via PlanFreezeRepository.freeze) ─────────
+  // Mirrors the freeze action in V2AssignedPlanCard but as a focused
+  // bottom sheet — pick 7 / 14 / 30 days OR a custom amount of her own
+  // choice, hit Pause, snackbar on result. The backend enforces two
+  // independent caps (the plan's lifetime freeze budget, and "must leave
+  // at least 1 day before expiry" -- see freezeStatus/freezePlan in
+  // planFreezeController.js) and returns the tighter one as
+  // maxFreezeDaysNow; we use that to grey out presets that would be
+  // rejected and to bound the custom field, but the backend's own
+  // message is still surfaced verbatim on rejection as a fallback in
+  // case freeze-status here is stale.
+  void _showFreezeSheet() {
+    // Reset the in-memory selection each time the sheet opens.
+    _freezeSelectedDays = 7;
+    _freezeCustomSelected = false;
+    _freezeBusy = false;
+    final customController = TextEditingController();
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        return StatefulBuilder(
+          builder: (innerCtx, setSheetState) {
+            final cap = (_freezeStatus?['maxFreezeDaysNow'] as num?)?.toInt();
+            final blocked = cap != null && cap <= 0;
+            final presets =
+                const [7, 14, 30].where((d) => cap == null || d <= cap).toList();
+
+            int? resolvedDays() {
+              if (_freezeCustomSelected) {
+                return int.tryParse(customController.text.trim());
+              }
+              return _freezeSelectedDays;
+            }
+
+            Widget dayChip(int days) {
+              final selected =
+                  !_freezeCustomSelected && days == _freezeSelectedDays;
+              return Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _freezeBusy
+                      ? null
+                      : () => setSheetState(() {
+                            _freezeCustomSelected = false;
+                            _freezeSelectedDays = days;
+                          }),
+                  child: Container(
+                    height: 56,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: selected ? _kHeroDark : Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: selected ? _kHeroDark : _kCardBorder,
+                        width: 1,
+                      ),
+                    ),
+                    child: Text(
+                      '$days days',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: selected ? Colors.white : _kTextPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            Widget customChip() {
+              return Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _freezeBusy
+                      ? null
+                      : () => setSheetState(() {
+                            _freezeCustomSelected = true;
+                            if (customController.text.trim().isEmpty) {
+                              customController.text =
+                                  (cap ?? _freezeSelectedDays).toString();
+                            }
+                          }),
+                  child: Container(
+                    height: 56,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: _freezeCustomSelected ? _kHeroDark : Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color:
+                            _freezeCustomSelected ? _kHeroDark : _kCardBorder,
+                        width: 1,
+                      ),
+                    ),
+                    child: Text(
+                      'Custom',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color:
+                            _freezeCustomSelected ? Colors.white : _kTextPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            final bottomSafe = MediaQuery.of(sheetCtx).padding.bottom;
+            final bottomInsets = MediaQuery.of(sheetCtx).viewInsets.bottom;
+            return Container(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                14,
+                20,
+                24 + (bottomInsets > 0 ? bottomInsets : bottomSafe),
+              ),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(24),
+                  topRight: Radius.circular(24),
+                ),
+              ),
+              child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: _kCardBorder,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Pause your plan',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: _kTextPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      cap != null
+                          ? 'Your plan resumes automatically after the selected '
+                              'pause window. You can pause for up to $cap '
+                              "day(s) right now. You can unfreeze anytime "
+                              "before then — any days you don't end up using "
+                              "are added back onto your plan's end date "
+                              'automatically.'
+                          : 'Your plan resumes automatically after the selected '
+                              'pause window. Subject to your remaining freeze '
+                              "budget. You can unfreeze anytime before then — "
+                              "any days you don't end up using are added back "
+                              "onto your plan's end date automatically.",
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 13,
+                        color: _kSage,
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    if (blocked)
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFBEAEA),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Text(
+                          _freezeStatus?['blockedReason']?.toString() ??
+                              "Your plan can't be paused right now.",
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: _kDanger,
+                          ),
+                        ),
+                      )
+                    else ...[
+                      Row(
+                        children: [
+                          for (int i = 0; i < presets.length; i++) ...[
+                            dayChip(presets[i]),
+                            const SizedBox(width: 8),
+                          ],
+                          customChip(),
+                        ],
+                      ),
+                      if (_freezeCustomSelected) ...[
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: customController,
+                          keyboardType: TextInputType.number,
+                          onChanged: (_) => setSheetState(() {}),
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 14,
+                            color: _kTextPrimary,
+                          ),
+                          decoration: InputDecoration(
+                            hintText:
+                                cap != null ? 'Up to $cap days' : 'Number of days',
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 12),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: _kCardBorder),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: _kCardBorder),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: _kHeroDark),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                    const SizedBox(height: 18),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: (_freezeBusy || blocked)
+                          ? null
+                          : () async {
+                              final days = resolvedDays();
+                              if (days == null ||
+                                  days < 1 ||
+                                  (cap != null && days > cap)) {
+                                Get.snackbar(
+                                  'Invalid',
+                                  cap != null
+                                      ? 'Enter a number between 1 and $cap.'
+                                      : 'Enter a number of days.',
+                                  snackPosition: SnackPosition.BOTTOM,
+                                );
+                                return;
+                              }
+                              setSheetState(() => _freezeBusy = true);
+                              final ok = await _runFreeze(days);
+                              if (Navigator.of(sheetCtx).canPop()) {
+                                Navigator.of(sheetCtx).pop();
+                              }
+                              if (ok) {
+                                // Refresh home so the new plan status shows
+                                // on next dashboard read. Best-effort.
+                                if (Get.isRegistered<HomeController>()) {
+                                  Get.find<HomeController>()
+                                      .getUserHomeFunc();
+                                }
+                                // Also refresh freeze-status so the
+                                // "ACTIVE"/"PAUSED" pill and the
+                                // Freeze/Unfreeze button flip immediately
+                                // instead of only after leaving and
+                                // reopening this screen.
+                                _fetchFreezeStatus();
+                              }
+                            },
+                      child: Container(
+                        height: 50,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: (_freezeBusy || blocked)
+                              ? _kAccent.withOpacity(0.5)
+                              : _kAccent,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Text(
+                          _freezeBusy
+                              ? 'Pausing…'
+                              : (blocked
+                                  ? 'Pause plan'
+                                  : 'Pause for ${resolvedDays() ?? _freezeSelectedDays} days'),
+                          style: const TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _freezeBusy
+                          ? null
+                          : () => Navigator.of(sheetCtx).pop(),
+                      child: Container(
+                        height: 46,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border:
+                              Border.all(color: _kCardBorder, width: 1),
+                        ),
+                        child: const Text(
+                          'Cancel',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: _kTextPrimary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+          },
+        );
+      },
+    );
+  }
+
+  // ─── Cancel plan (the actual, live entry point — see _subscriptionCard) ─
+  // GET /users/get_user_plans is the only endpoint that returns the real
+  // UserPlan row id; the subscription card above renders from
+  // HomeController.userHomeData, whose UserAllPlan model only carries
+  // `planId` (the Plan template id, not this specific subscription row),
+  // so that id has to be looked up here before the cancel call can fire.
+  Future<void> _showCancelPlanFlow() async {
+    if (_cancellingPlan) return;
+    setState(() => _cancellingPlan = true);
+    try {
+      final token =
+          authController.sharedPreferences.getString(Constants.accessToken) ??
+              '';
+      final plansRes =
+          await Get.find<UserPlanRepository>().getMyPlans(accessToken: token);
+      int? userPlanId;
+      if (plansRes.body != null &&
+          plansRes.body['status'] == '1' &&
+          plansRes.body['data'] is List) {
+        final rows = (plansRes.body['data'] as List).whereType<Map>().toList();
+        if (rows.isNotEmpty) {
+          final idVal = rows.first['id'];
+          userPlanId = idVal is int ? idVal : int.tryParse(idVal.toString());
+        }
+      }
+      if (userPlanId == null) {
+        Get.snackbar(
+          'Could not cancel',
+          'No active plan found — try again in a moment.',
+          snackPosition: SnackPosition.BOTTOM,
+        );
+        return;
+      }
+
+      final combinedReason = await Get.dialog<String>(const CancelPlanDialog());
+      if (combinedReason == null) return; // backed out via "Keep plan"
+
+      final res = await Get.find<PlanFreezeRepository>().cancel(
+        accessToken: token,
+        userPlanId: userPlanId,
+        reason: combinedReason,
+      );
+      final ok = res.body != null && res.body['status'] == '1';
+      Get.snackbar(
+        ok ? 'Plan cancelled' : 'Could not cancel',
+        res.body?['message']?.toString() ?? '',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      if (ok) {
+        // Flips logInUser.status locally so `_isPaid` (used right above
+        // to decide whether this whole subscription card even renders)
+        // is correct on the very next build — same trick used after a
+        // slip-upload auto-approval (see AuthController.markPaid).
+        authController.markUnpaid();
+        if (Get.isRegistered<HomeController>()) {
+          Get.find<HomeController>().getUserHomeFunc();
+        }
+      }
+    } catch (e) {
+      Get.snackbar('Error', e.toString(), snackPosition: SnackPosition.BOTTOM);
+    } finally {
+      if (mounted) setState(() => _cancellingPlan = false);
+    }
+  }
+
+  Future<bool> _runFreeze(int days) async {
+    try {
+      final repo = Get.find<PlanFreezeRepository>();
+      final token =
+          authController.sharedPreferences.getString(Constants.accessToken) ??
+              '';
+      final res = await repo.freeze(accessToken: token, days: days);
+      final ok = res.body != null && res.body['status'] == '1';
+      Get.snackbar(
+        ok ? 'Plan paused' : 'Could not freeze',
+        res.body?['message']?.toString() ?? '',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return ok;
+    } catch (e) {
+      Get.snackbar('Error', e.toString(),
+          snackPosition: SnackPosition.BOTTOM);
+      return false;
+    }
+  }
+
+  // ─── Unfreeze (the other half of the Freeze/Unfreeze toggle) ───────────
+  void _showUnfreezeDialog() {
+    final resumeOn = _freezeStatus?['willResumeOn'];
+    final resumeText = resumeOn != null
+        ? " It was already due to resume on ${_formatShortDate(DateTime.tryParse(resumeOn.toString()) ?? DateTime.now())}."
+        : '';
+    Get.dialog(
+      AlertDialog(
+        title: const Text('Resume your plan now?'),
+        content: Text(
+          "You'll pick up right where you left off — classes and your "
+          "diet plan become active again immediately.$resumeText Any "
+          // Verified against the actual backend mechanism
+          // (applyUnfreeze in planFreezeController.js): freezing adds
+          // the full selected days to your plan's end date right away;
+          // unfreezing early gives back only the days you didn't end up
+          // using, pulling your end date back by that unused amount —
+          // so you're only ever charged, day-for-day, for the pause you
+          // actually took.
+          "days you don't end up using are added back onto your plan's "
+          "end date, and stay available if you want to freeze again "
+          "later.",
+          style: const TextStyle(fontSize: 13, color: _kTextMuted),
+        ),
+        actions: [
+          TextButton(onPressed: () => Get.back(), child: const Text('Not yet')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _kAccent,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              Get.back();
+              final ok = await _runUnfreeze();
+              if (ok) {
+                _fetchFreezeStatus();
+                if (Get.isRegistered<HomeController>()) {
+                  Get.find<HomeController>().getUserHomeFunc();
+                }
+              }
+            },
+            child: const Text(
+              'Unfreeze now',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _runUnfreeze() async {
+    try {
+      final repo = Get.find<PlanFreezeRepository>();
+      final token =
+          authController.sharedPreferences.getString(Constants.accessToken) ??
+              '';
+      final res = await repo.unfreeze(accessToken: token);
+      final ok = res.body != null && res.body['status'] == '1';
+      Get.snackbar(
+        ok ? 'Plan resumed' : 'Could not unfreeze',
+        res.body?['message']?.toString() ?? '',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return ok;
+    } catch (e) {
+      Get.snackbar('Error', e.toString(), snackPosition: SnackPosition.BOTTOM);
+      return false;
+    }
+  }
+
+  // Cancel plan is blocked while frozen — Shaista's call: cancelling a
+  // paused plan is confusing (what refunds, what date, access already
+  // paused) so we ask for an unfreeze first. Kept tappable so the reason
+  // is visible instead of the button just silently doing nothing.
+  void _explainCancelBlockedByFreeze() {
+    Get.snackbar(
+      "Can't cancel a paused plan",
+      'Unfreeze your plan first, then you can cancel it.',
+      snackPosition: SnackPosition.BOTTOM,
+    );
+  }
+
+  // ─── Help sheet (Text admin on WhatsApp) ───────────────────────────────
+  void _showHelpSheet(BuildContext context, TextTheme textTheme) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) {
+        final bottomSafe = MediaQuery.of(sheetCtx).padding.bottom;
+        return Container(
+          padding: EdgeInsets.fromLTRB(20, 14, 20, 24 + bottomSafe),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(24),
+              topRight: Radius.circular(24),
+            ),
+          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: _kCardBorder,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Need help?',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: _kTextPrimary,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Reach out to our team — we usually reply within a few hours.',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 13,
+                color: _kSage,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 18),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                Get.back<dynamic>();
+                openWhatsAppChat('923264986911');
+              },
+              child: Container(
+                height: 50,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF25D366), // WhatsApp green
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Text(
+                  'Message admin on WhatsApp',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => Get.back<dynamic>(),
+              child: Container(
+                height: 46,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _kCardBorder, width: 1),
+                ),
+                child: const Text(
+                  'Cancel',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _kTextPrimary,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
+  // ─── Sign-out link (red text) ──────────────────────────────────────────
+  Widget _signOutLink(BuildContext context, TextTheme textTheme) {
+    return Column(
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _showLogoutDialog(context, textTheme),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(vertical: 14),
+            child: Text(
+              'Sign out',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: _kDanger,
+              ),
+            ),
+          ),
+        ),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _showDeleteDialog,
+          child: const Padding(
+            padding: EdgeInsets.only(top: 4, bottom: 10),
+            child: Text(
+              'Delete account',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: _kSage,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ─── Shared building blocks ────────────────────────────────────────────
+  Widget _card({required Widget child, EdgeInsets? padding}) {
+    return Container(
+      padding: padding ?? const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _kCardBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: _kCardBorder, width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: _kTextPrimary.withOpacity(0.08),
+            offset: const Offset(0, 8),
+            blurRadius: 24,
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  String _formatShortDate(DateTime d) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
+  }
+}
+
+class _MenuItem {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  const _MenuItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+}
+
+class _WeekRow {
+  final String label;
+  final int completed;
+  final int target;
+  const _WeekRow({
+    required this.label,
+    required this.completed,
+    required this.target,
+  });
+}

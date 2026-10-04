@@ -3,6 +3,54 @@ import 'package:fitness_zone_2/data/models/api_response/api_response_model.dart'
 import 'package:fitness_zone_2/data/models/get_clients_diet.dart';
 import 'package:get/get.dart';
 
+/// Author details read straight from the raw "User" json, null safe.
+/// Used by the FitHer Feed (role chip, photo) without depending on
+/// ClientUser's required fields.
+class FeedAuthor {
+  final int? id;
+  final String name;
+  final String? userType;
+  final String? image;
+  const FeedAuthor({this.id, required this.name, this.userType, this.image});
+
+  static FeedAuthor fromJson(dynamic u) {
+    if (u is! Map) return const FeedAuthor(name: 'Member');
+    final first = (u['firstName'] ?? '').toString().trim();
+    final last = (u['lastName'] ?? '').toString().trim();
+    final full = [first, last].where((e) => e.isNotEmpty).join(' ');
+    final img = u['image']?.toString();
+    return FeedAuthor(
+      id: u['id'] is int ? u['id'] as int : int.tryParse('${u['id']}'),
+      name: full.isEmpty ? 'Member' : full,
+      userType: u['userType']?.toString(),
+      image: (img == null || img.isEmpty || img == 'null') ? null : img,
+    );
+  }
+
+  /// Staff (trainers, dietitians, doctors, admin) show a green avatar tick
+  /// and their role; everyone else is a Member.
+  bool get isStaff => userType != null && userType != 'User';
+
+  String get roleLabel {
+    switch (userType) {
+      case 'Trainer':
+        return 'Trainer';
+      case 'Dietition':
+        return 'Dietitian';
+      case 'Gynecologist':
+        return 'Gynaecologist';
+      case 'Psychiatrist':
+        return 'Psychiatrist';
+      case 'Admin':
+        return 'FitHer team';
+      default:
+        return 'Member';
+    }
+  }
+
+  String get initial => name.isEmpty ? '?' : name.substring(0, 1).toUpperCase();
+}
+
 /// Reply Model (for WhatsApp-like chat replies)
 class Reply {
   final int id;
@@ -12,6 +60,7 @@ class Reply {
   final int? replyToId;
   final DateTime createdAt;
   final ClientUser? user;
+  final FeedAuthor author;
 
   Reply({
     required this.id,
@@ -21,6 +70,7 @@ class Reply {
     this.replyToId,
     required this.createdAt,
     this.user,
+    this.author = const FeedAuthor(name: 'Member'),
   });
 
   factory Reply.fromJson(Map<String, dynamic> json) {
@@ -31,7 +81,8 @@ class Reply {
       message: json['text'] ?? '',
       replyToId: json['replyToId'],
       createdAt: DateTime.parse(json['createdAt']),
-      user: json['User'] == null ? null : ClientUser.fromJson(json['User']),
+      user: _safeUser(json['User']),
+      author: FeedAuthor.fromJson(json['User']),
     );
   }
 
@@ -70,6 +121,7 @@ class Post {
   final String? userId;
   final ClientUser? user;
   final List<Like> likes;
+  final FeedAuthor author;
 
   /// New reactive fields
   RxInt likesCount;
@@ -87,6 +139,7 @@ class Post {
     this.userId,
     this.user,
     required this.likes,
+    this.author = const FeedAuthor(name: 'Member'),
     RxInt? likesCount,
     RxBool? isLiked,
     RxList<Reply>? replies,
@@ -109,9 +162,18 @@ class Post {
       updatedAt: postUpdatedAt != null ? DateTime.parse(postUpdatedAt.toString()) : DateTime.now(),
       userId: json['userId'].toString(),
       likes: json['likes'] == null ? [] : (json['likes'] as List).map((e) => Like.fromJson(e)).toList(),
-      user: json['User'] == null ? null : ClientUser.fromJson(json['User']),
-      likesCount: RxInt(json['likeCount'] ?? 0),
-      isLiked: RxBool(json['isLiked'] ?? false),
+      user: _safeUser(json['User']),
+      author: FeedAuthor.fromJson(json['User']),
+      likesCount: RxInt(json['likeCount'] ??
+          (json['likes'] is List ? (json['likes'] as List).length : 0)),
+      // The server sends the list of userIds who liked; work out whether
+      // this user is one of them.
+      isLiked: RxBool(json['isLiked'] ??
+          (json['likes'] is List &&
+              (json['likes'] as List).any((l) =>
+                  l is Map &&
+                  '${l['userId']}' ==
+                      '${Get.find<AuthController>().logInUser?.id}'))),
       replies: json['messages'] == null
           ? <Reply>[].obs
           : (json['messages'] as List).map((e) => Reply.fromJson(e)).toList().obs, // convert List<Reply> to RxList<Reply>
@@ -154,5 +216,21 @@ class PostList extends Serializable {
     return {
       'posts': posts.map((e) => e.toJson()).toList(),
     };
+  }
+}
+
+/// ClientUser.fromJson needs every field; never let one missing field
+/// break the whole feed.
+ClientUser? _safeUser(dynamic u) {
+  if (u is! Map<String, dynamic>) return null;
+  try {
+    return ClientUser.fromJson({
+      ...u,
+      'firstName': u['firstName'] ?? '',
+      'lastName': u['lastName'] ?? '',
+      'email': u['email'] ?? '',
+    });
+  } catch (_) {
+    return null;
   }
 }

@@ -30,12 +30,14 @@ class DietitianAvailabilitySlot {
 
 class DietitianAvailability {
   final int? dietitianId;
+  final String? dietitianName;
   final String? from;
   final String? to;
   final List<DietitianAvailabilitySlot> slots;
 
   const DietitianAvailability({
     this.dietitianId,
+    this.dietitianName,
     this.from,
     this.to,
     this.slots = const [],
@@ -52,6 +54,7 @@ class DietitianAvailability {
         : <DietitianAvailabilitySlot>[];
     return DietitianAvailability(
       dietitianId: json['dietitianId'] as int?,
+      dietitianName: json['dietitianName']?.toString(),
       from: json['from'] as String?,
       to: json['to'] as String?,
       slots: slots,

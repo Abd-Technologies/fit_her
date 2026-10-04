@@ -1,0 +1,391 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+
+import '../../data/controllers/paid_home_controller/paid_home_controller.dart';
+import '../../data/models/home_dashboard/home_dashboard_model.dart';
+import '../new_home/phase_theme.dart';
+
+/// "How I feel today" mood row.
+/// 5 mood cells, one selected at a time. Optimistic UI: tap reflects
+/// instantly; while the backend save is in flight the whole row dims to
+/// 60% and taps are blocked. On failure the selection reverts to the
+/// previous dashboard value and a SnackBar explains.
+///
+/// Mood int convention (mirrors DailyCheckin.moodLevel server-side):
+///   1 = Great · 2 = Tired · 3 = Sore · 4 = Energy · 5 = Stress
+class PaidFeelSelector extends StatefulWidget {
+  final HomeDashboardModel dashboard;
+
+  const PaidFeelSelector({Key? key, required this.dashboard})
+      : super(key: key);
+
+  @override
+  State<PaidFeelSelector> createState() => _PaidFeelSelectorState();
+}
+
+class _PaidFeelSelectorState extends State<PaidFeelSelector> {
+  // Each mood gets its own soft accent instead of one uniform dark pill
+  // for all five — lets the row read as expressive/varied at a glance,
+  // and gives selecting "Great" vs "Stress" a genuinely different feel.
+  // Deliberately muted/pastel (not traffic-light red/green) so a hard
+  // day never reads as "wrong" — a wellness app shouldn't punish Stress
+  // or Sore with an alarming color.
+  static const List<_Mood> _moods = [
+    _Mood(emoji: '😊', label: 'Great', color: Color(0xFF6DC55A)),
+    _Mood(emoji: '😴', label: 'Tired', color: Color(0xFF8FA6C9)),
+    _Mood(emoji: '😣', label: 'Sore', color: Color(0xFFE39B6B)),
+    _Mood(emoji: '⚡', label: 'Energy', color: Color(0xFFE8B23D)),
+    _Mood(emoji: '😤', label: 'Stress', color: Color(0xFFD97B87)),
+  ];
+
+  final PaidHomeController _controller = Get.find<PaidHomeController>();
+
+  /// Null when no tap is in flight. When non-null, overrides the index
+  /// derived from `dashboard.todayCheckin.moodLevel`. Cleared on success
+  /// AND on failure — after either, the dashboard is the source of truth.
+  int? _optimisticIndex;
+
+  /// The reply tip shows for 4 seconds after she picks a feeling, then
+  /// folds away. Tapping her selected feeling again shows it again.
+  bool _tipVisible = false;
+  Timer? _tipTimer;
+
+  void _flashTip() {
+    _tipTimer?.cancel();
+    setState(() => _tipVisible = true);
+    _tipTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _tipVisible = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _tipTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Maps backend moodLevel (1..5, nullable) to UI cell index (0..4, nullable).
+  /// Invalid values return null so no cell is pre-selected.
+  int? _dashboardIndex() {
+    final m = widget.dashboard.todayCheckin?.moodLevel;
+    if (m == null || m < 1 || m > 5) return null;
+    return m - 1;
+  }
+
+  int? _effectiveIndex() => _optimisticIndex ?? _dashboardIndex();
+
+  Future<void> _onTap(int cellIndex) async {
+    // Ignore taps while a save is in flight (simple approach per spec).
+    if (_controller.isSavingMood.value) return;
+
+    final previous = _effectiveIndex();
+    // Tapping the selected feeling again just shows its tip again.
+    if (previous == cellIndex) {
+      _flashTip();
+      return;
+    }
+
+    // Optimistic: paint the new selection immediately.
+    setState(() => _optimisticIndex = cellIndex);
+
+    final success = await _controller.logMood(cellIndex + 1);
+    if (!mounted) return;
+
+    // Clear the optimistic override either way — the dashboard (refreshed on
+    // success, unchanged on failure) becomes the source of truth again.
+    setState(() => _optimisticIndex = null);
+
+    if (success) _flashTip();
+
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Couldn't save. Please try again."),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasCycle = widget.dashboard.cycle?.cycleDay != null;
+    final phaseKey = hasCycle
+        ? parseCyclePhase(widget.dashboard.cycle?.phase).name
+        : 'none';
+    final accent = hasCycle
+        ? PhaseTheme.forPhaseString(widget.dashboard.cycle?.phase).accent
+        : const Color(0xFF6DC55A);
+    final selectedIndex = _effectiveIndex();
+    final reply = selectedIndex == null
+        ? null
+        : _MoodReplies.forPhase(phaseKey, selectedIndex);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFD8EDD4), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF163220).withOpacity(0.05),
+            offset: const Offset(0, 2),
+            blurRadius: 10,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // "How I feel today" — bumped up from the old 9px .lbl9 spec.
+          // This is the one daily, personal input on the whole screen; it
+          // was visually the quietest thing on the card, which undersold
+          // it every single time someone opened the app.
+          Row(
+            children: [
+              // Neutral green heart before anything's picked today; once
+              // a mood is selected (optimistic tap or the saved dashboard
+              // value), the header itself reflects that mood instead of
+              // staying a generic icon — a small confirmation that reads
+              // at a glance, not just the "Logged ✓" text over on the right.
+              Text(
+                _effectiveIndex() != null
+                    ? _moods[_effectiveIndex()!].emoji
+                    : '💚',
+                style: const TextStyle(fontSize: 12),
+              ),
+              const SizedBox(width: 5),
+              const Text(
+                'How I feel today',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF163220),
+                ),
+              ),
+              const Spacer(),
+              // Quiet reward for having already logged today — closes the
+              // loop instead of the tap just silently updating something.
+              if (_dashboardIndex() != null && _optimisticIndex == null)
+                Text(
+                  'Logged ✓',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    color: _moods[_dashboardIndex()!].color,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 9),
+          // Track: cream bg, flex row, 3 px inner padding, 2 px gap.
+          Obx(() {
+            final saving = _controller.isSavingMood.value;
+            return Opacity(
+              opacity: saving ? 0.6 : 1.0,
+              child: IgnorePointer(
+                ignoring: saving,
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEAF7E4),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      for (int i = 0; i < _moods.length; i++) ...[
+                        Expanded(
+                          child: _Cell(
+                            mood: _moods[i],
+                            accent: accent,
+                            selected: _effectiveIndex() == i,
+                            onTap: () => _onTap(i),
+                          ),
+                        ),
+                        if (i < _moods.length - 1) const SizedBox(width: 2),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }),
+          // One line reply to the mood she picked, tuned to her cycle
+          // phase. Fixed copy, no AI call.
+          AnimatedSize(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+            child: (reply == null || !_tipVisible)
+                ? const SizedBox(width: double.infinity)
+                : Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(top: 9),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: accent.withOpacity(0.14),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      reply,
+                      style: const TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 10.5,
+                        height: 1.4,
+                        color: Color(0xFF163220),
+                      ),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Reply lines per phase, indexed by mood cell:
+/// 0 Great · 1 Tired · 2 Sore · 3 Energy · 4 Stress.
+class _MoodReplies {
+  static const Map<String, List<String>> _byPhase = {
+    'menstrual': [
+      'Love that. Keep today light and enjoy the good energy 💚',
+      'Totally normal on period days. A gentle class and an early night will help 💚',
+      'Go easy today. Warm water and slow stretches ease cramps.',
+      'Nice! Still keep it gentle, your body is working hard.',
+      'Take a slow breath. A short walk or stretch can calm cramps and nerves.',
+    ],
+    'follicular': [
+      'That rising energy is real. Make the most of today\'s class 💪',
+      'Noted. Sleep well tonight, your energy is on the way up.',
+      'Good sign you worked hard. Stretch before class today.',
+      'Perfect timing. This is your week to try something new.',
+      'Noted. Moving today will help clear your head.',
+    ],
+    'ovulatory': [
+      'Peak days and you feel it. Give today\'s class your all ✨',
+      'Noted. Even on peak days rest matters. Keep today\'s class steady.',
+      'Warm up well today. Your body can take it, just listen to it.',
+      'That\'s your ovulation energy. Great day for strength work.',
+      'Noted. A strong workout today is a great way to let it out.',
+    ],
+    'luteal': [
+      'Lovely. Enjoy it and keep your meals steady today 💚',
+      'Normal before your period. A steady class and an early night will help.',
+      'Go a little lighter today. Your body needs more recovery now.',
+      'Nice! Use it well, but don\'t push to the limit this week.',
+      'Mood dips are common this week. Be kind to yourself today 💚',
+    ],
+    'none': [
+      'Love that. Make the most of it today 💚',
+      'Noted. A lighter class and an early night will help.',
+      'Stretch well before class and go at your own pace.',
+      'Great! Put that energy into today\'s class.',
+      'Take a slow breath. A short workout can really help.',
+    ],
+  };
+
+  static String? forPhase(String phase, int index) {
+    final list = _byPhase[phase] ?? _byPhase['none']!;
+    if (index < 0 || index >= list.length) return null;
+    return list[index];
+  }
+}
+
+class _Mood {
+  final String emoji;
+  final String label;
+  final Color color;
+  const _Mood({required this.emoji, required this.label, required this.color});
+}
+
+class _Cell extends StatelessWidget {
+  final _Mood mood;
+  final Color accent;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _Cell({
+    required this.mood,
+    required this.accent,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      // Tap feedback: the whole cell pops slightly on selection instead of
+      // flatly swapping — a small nudge that the app noticed the tap.
+      child: TweenAnimationBuilder<double>(
+        key: ValueKey('${mood.label}-$selected'),
+        tween: Tween(begin: selected ? 0.9 : 1.0, end: 1.0),
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutBack,
+        builder: (context, scale, child) =>
+            Transform.scale(scale: scale, child: child),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
+          // Selected: white cell with a phase coloured border.
+          decoration: selected
+              ? BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: accent, width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: accent.withOpacity(0.25),
+                      offset: const Offset(0, 2),
+                      blurRadius: 8,
+                    ),
+                  ],
+                )
+              : BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.transparent, width: 1.5),
+                ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Emoji sits on its own soft color badge at all times — even
+              // unselected, each mood carries its own identity instead of
+              // all five looking like interchangeable pale chips.
+              Container(
+                width: 26,
+                height: 26,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: mood.color.withOpacity(0.14),
+                ),
+                child: Text(
+                  mood.emoji,
+                  style: const TextStyle(fontSize: 16, height: 1.0),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                mood.label,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 8.5,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected
+                      ? const Color(0xFF163220)
+                      : const Color(0xFF9AB09A),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

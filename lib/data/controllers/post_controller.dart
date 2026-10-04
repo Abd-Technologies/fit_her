@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:get/get.dart';
+import 'auth_controller/auth_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../values/constants.dart';
 import '../../../widgets/toasts.dart';
@@ -28,8 +29,8 @@ class PostController extends GetxController implements GetxService {
   /// ================================
   /// 🔹 GET ALL POSTS (with replies & likes)
   /// ================================
-  getAllPosts({bool approved = true}) {
-    allPostsLoad.value = false;
+  getAllPosts({bool approved = true, bool silent = false}) {
+    if (!silent) allPostsLoad.value = false;
     homeRepo
         .getAllPosts(
       approved: approved,
@@ -38,7 +39,9 @@ class PostController extends GetxController implements GetxService {
         .then((response) {
       if (response.statusCode == 200) {
         ApiResponse<PostList> model = ApiResponse.fromJson(response.body, PostList.fromJson);
-        postsList.value = List<Post>.from(model.data!.posts.map((x) => Post.fromJson(x.toJson())));
+        // Use the parsed posts as they are: re-parsing through toJson()
+        // lost the author's role, photo and who liked what.
+        postsList.value = List<Post>.from(model.data!.posts);
         allPostsLoad.value = true;
       } else {
         CustomToast.failToast(msg: "Failed to fetch posts");
@@ -174,6 +177,15 @@ class PostController extends GetxController implements GetxService {
   /// 🔹 LIKE / UNLIKE POST
   /// ================================
   likePost(int postId) {
+    // Optimistic: flip the heart and count at once, undo if the call fails.
+    // The socket echo of our own like is ignored (see SocketController).
+    final post = postsList.firstWhereOrNull((p) => p.id == postId);
+    if (post != null) {
+      final nowLiked = !post.isLiked.value;
+      post.isLiked.value = nowLiked;
+      post.likesCount.value =
+          (post.likesCount.value + (nowLiked ? 1 : -1)).clamp(0, 1 << 30);
+    }
     likeLoad.value = false;
     homeRepo
         .likePost(
@@ -182,27 +194,34 @@ class PostController extends GetxController implements GetxService {
       userId: sharedPreferences.getString(Constants.userId) ?? "0",
     )
         .then((response) {
+      var ok = false;
       if (response.statusCode == 200) {
-        var data = jsonDecode(response.bodyString ?? "");
-        if (data["status"] == "1") {
-          // Update locally
-          final post = postsList.firstWhereOrNull((p) => p.id == postId);
-          if (post != null) {
-            if ("Like removed" == data["message"]) {
-              post.isLiked.value = false;
-            } else {
-              post.isLiked.value = true;
-              postsList.refresh();
+        try {
+          final data = jsonDecode(response.bodyString ?? "");
+          ok = data["status"] == "1";
+          if (ok && post != null) {
+            // Trust the server on the final state.
+            final liked = "Like removed" != data["message"];
+            if (post.isLiked.value != liked) {
+              post.isLiked.value = liked;
+              post.likesCount.value =
+                  (post.likesCount.value + (liked ? 1 : -1)).clamp(0, 1 << 30);
             }
-            //  post.likesCount = data["data"]["likesCount"];
+          } else if (!ok) {
+            CustomToast.failToast(msg: data["message"]);
           }
-        } else {
-          CustomToast.failToast(msg: data["message"]);
-        }
-        likeLoad.value = true;
-      } else {
-        CustomToast.failToast(msg: "Something went wrong");
+        } catch (_) {}
       }
+      if (!ok && post != null) {
+        final back = !post.isLiked.value;
+        post.isLiked.value = back;
+        post.likesCount.value =
+            (post.likesCount.value + (back ? 1 : -1)).clamp(0, 1 << 30);
+        if (response.statusCode != 200) {
+          CustomToast.failToast(msg: "Couldn't update like. Try again.");
+        }
+      }
+      likeLoad.value = true;
     });
   }
 
@@ -240,6 +259,110 @@ class PostController extends GetxController implements GetxService {
         CustomToast.failToast(msg: "Something went wrong");
       }
     });
+  }
+
+  // ── FitHer Feed helpers ──────────────────────────────────────────
+
+  int? get myId => int.tryParse(sharedPreferences.getString(Constants.userId) ?? '');
+
+  /// Same rule as the server: staff always, members with a paid plan.
+  /// Trial and free users can read and like only.
+  bool get canPost {
+    final auth = Get.find<AuthController>();
+    final type = auth.logInUser?.userType;
+    if (type != null && type != 'User') return true;
+    return auth.logInUser?.status == true;
+  }
+
+  /// Sends a reply and adds it to the post at once. Returns true on success.
+  Future<bool> sendReplyNow({required int postId, required String message}) async {
+    replySendLoad.value = false;
+    final response = await homeRepo.sendReply(
+      accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
+      postId: postId,
+      userId: sharedPreferences.getString(Constants.userId) ?? "0",
+      message: message,
+    );
+    replySendLoad.value = true;
+    final code = response.statusCode ?? 0;
+    try {
+      final res = jsonDecode(response.bodyString ?? "");
+      if (code >= 200 && code < 300 && res["status"] == "1") {
+        final r = res["data"]?["reply"];
+        final post = postsList.firstWhereOrNull((p) => p.id == postId);
+        if (r is Map<String, dynamic> && post != null) {
+          final reply = Reply.fromJson(r);
+          if (!post.replies.any((x) => x.id == reply.id)) {
+            post.replies.add(reply);
+            postsList.refresh();
+          }
+        }
+        return true;
+      }
+      CustomToast.failToast(msg: res["message"] ?? "Couldn't send. Try again.");
+    } catch (_) {
+      CustomToast.failToast(msg: "Couldn't send. Try again.");
+    }
+    return false;
+  }
+
+  /// Deletes a post. Returns true on success.
+  Future<bool> deletePostNow(int postId) async {
+    final response = await homeRepo.deletePost(
+      accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
+      postId: postId,
+    );
+    try {
+      final res = response.body is Map ? response.body : jsonDecode(response.bodyString ?? "");
+      if (response.statusCode == 200 && res["status"] == "1") {
+        postsList.removeWhere((p) => p.id == postId);
+        return true;
+      }
+      CustomToast.failToast(msg: res["message"] ?? "Couldn't delete. Try again.");
+    } catch (_) {
+      CustomToast.failToast(msg: "Couldn't delete. Try again.");
+    }
+    return false;
+  }
+
+  /// Edits own post: new text, a new photo, or remove the photo.
+  Future<bool> editPost({
+    required int postId,
+    required String text,
+    File? newImage,
+    bool removeImage = false,
+  }) async {
+    createPostLoad.value = false;
+    final response = await homeRepo.editPost(
+      accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
+      postId: postId,
+      text: text,
+      file: newImage,
+      removeImage: removeImage,
+    );
+    createPostLoad.value = true;
+    try {
+      final res = jsonDecode(response.bodyString ?? "");
+      if ((response.statusCode ?? 0) < 300 && res["status"] == "1") {
+        final j = res["data"]?["post"];
+        if (j is Map<String, dynamic>) {
+          final updated = Post.fromJson(j);
+          final i = postsList.indexWhere((p) => p.id == postId);
+          if (!updated.approved) {
+            postsList.removeWhere((p) => p.id == postId);
+          } else if (i >= 0) {
+            postsList[i] = updated;
+          }
+          postsList.refresh();
+        }
+        CustomToast.successToast(msg: res["message"] ?? "Post updated");
+        return true;
+      }
+      CustomToast.failToast(msg: res["message"] ?? "Couldn't update. Try again.");
+    } catch (_) {
+      CustomToast.failToast(msg: "Couldn't update. Try again.");
+    }
+    return false;
   }
 
   /// Upload image locally

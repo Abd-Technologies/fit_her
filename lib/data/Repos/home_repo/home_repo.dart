@@ -735,6 +735,31 @@ class HomeRepo extends GetxService {
     }
   }
 
+  /// Edit own post (FitHer Feed). New photo goes as multipart "image".
+  Future<Response> editPost({
+    required String accessToken,
+    required int postId,
+    required String text,
+    File? file,
+    bool removeImage = false,
+  }) async {
+    final url = "/posts/edit/$postId";
+    final body = <String, dynamic>{
+      "text": text,
+      "removeImage": removeImage.toString(),
+    };
+    if (file != null) {
+      body["image"] = file.path;
+      return await apiProvider.setFormData(
+        url: url,
+        formData: body,
+        headers: {"accessToken": accessToken},
+      );
+    }
+    return await apiProvider.postData(url,
+        body: body, headers: {"accessToken": accessToken});
+  }
+
   Future<Response> deletePost(
       {required String accessToken, required int postId}) async {
     return await apiProvider.deleteData("${Constants.deletePost}/$postId",
@@ -824,6 +849,23 @@ class HomeRepo extends GetxService {
   /// `Get.find<SharedPreferences>()`) to match [getPaidHomeDashboard]'s
   /// pattern. Returns true on status="1" responses, false on anything else.
   /// 10 s timeout.
+  /// Undo her last water tap today (DELETE /users/water_log/last).
+  Future<bool> undoLastWater() async {
+    try {
+      final prefs = Get.find<SharedPreferences>();
+      final token = prefs.getString(Constants.accessToken) ?? '';
+      if (token.isEmpty) return false;
+      final response = await apiProvider
+          .deleteData("${Constants.waterLog}/last", headers: {"accessToken": token})
+          .timeout(const Duration(seconds: 10));
+      final body = response.body;
+      return body is Map && body['status'] == '1';
+    } catch (e) {
+      debugPrint('[HomeRepo.undoLastWater] $e');
+      return false;
+    }
+  }
+
   Future<bool> logWater(int amountMl) async {
     try {
       final prefs = Get.find<SharedPreferences>();
@@ -892,6 +934,17 @@ class HomeRepo extends GetxService {
   /// always said PATCH; the impl drifted before patchData existed on
   /// ApiProvider (added in Phase E.1).
   /// Signup step 5 answer and the "recently had a baby" access check.
+  /// Which pre-consultation form steps she still has to answer.
+  Future<Response> getPreConsultRequirements({
+    required String accessToken,
+    required String planType,
+  }) async {
+    return await apiProvider.getData(
+      '${Constants.preConsultationProfile}/requirements?planType=$planType',
+      headers: {"accessToken": accessToken},
+    );
+  }
+
   Future<Response> getLifeStage({required String accessToken}) async {
     return await apiProvider.getData(
       '${Constants.preConsultationProfile}/life-stage',

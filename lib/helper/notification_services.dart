@@ -24,6 +24,7 @@ import '../UI/free_trail/trial_summary_screen.dart';
 import '../values/my_imgs.dart';
 import '../widgets/app_bar_widget.dart';
 import 'notification_message_classifier.dart' as classifier;
+import '../UI/support/support_ticket_screen.dart';
 
 class NotificationMessage {
   final int? serverId;
@@ -399,6 +400,17 @@ class NotificationServices {
     // Trial class reminder ("starts soon" / "it's live"): open the live
     // class schedule (Workout tab) so she can join in one tap.
     // Last-day offer reminder: open her trial summary + offer.
+    // Support replied to her report: open that ticket.
+    if (message.data["type"] == "support_reply") {
+      final id = int.tryParse(message.data["ticketId"]?.toString() ?? "");
+      if (id != null) {
+        Future.delayed(const Duration(milliseconds: 1200), () {
+          Get.to(() => SupportTicketScreen(ticketId: id));
+        });
+      }
+      return;
+    }
+
     if (message.data["type"] == "trialOfferReminder") {
       Future.delayed(const Duration(milliseconds: 1200), () {
         Get.to(() => const TrialSummaryScreen());

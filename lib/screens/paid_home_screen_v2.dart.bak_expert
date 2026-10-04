@@ -1,0 +1,436 @@
+import 'dart:async';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:get/get.dart';
+
+import '../UI/consultation_module/popup_orchestrator.dart';
+import '../UI/dashboard_module/bottom_bar_screen/bottom_bar_screen.dart';
+import '../data/controllers/paid_home_controller/paid_home_controller.dart';
+import '../data/models/home_dashboard/home_dashboard_model.dart';
+import '../utils/app_clock.dart';
+import '../widgets/paid_home_v2/paid_cycle_card.dart';
+import '../widgets/paid_home_v2/paid_footer.dart';
+import '../widgets/paid_home_v2/paid_hero.dart';
+import '../widgets/paid_home_v2/paid_insight_card.dart';
+import '../widgets/paid_home_v2/paid_stats_row.dart'
+    show PaidStatsRow;
+import '../widgets/paid_home_v2/today_insights_box.dart';
+import '../widgets/v2/plan_expiry_banner.dart';
+import '../widgets/v2/plan_frozen_banner.dart';
+import '../widgets/v2/v2_plan_preparing_card.dart';
+import '../widgets/v2/v2_trial_banner.dart';
+import '../main.dart' show routeObserver;
+import '../widgets/v2/v2_today_meals_section.dart' show V2Day7TriggerBanner;
+
+/// The three genuinely daily inputs on this screen, in the order they
+/// appear top-to-bottom (Mood, then Water/Sleep side by side — Water
+/// wins ties over Sleep simply because it's the left/first card of that
+/// row). Workouts and Calories are deliberately excluded: Workouts is
+/// derived from class attendance (nothing to manually log) and Calories
+/// is a computed target, not a daily entry.
+enum _DailyItem { mood, water, sleep, none }
+
+/// Which of the three daily items still needs logging today, derived
+/// purely from the current dashboard — no separate "just logged"
+/// tracking needed. Because every log action already triggers a
+/// dashboard refresh on success, this naturally advances mood -> water
+/// -> sleep the instant each one is saved, and clears once all three
+/// are done.
+_DailyItem _nextDailyItem(HomeDashboardModel dashboard) {
+  final moodDone = dashboard.todayCheckin?.moodLevel != null;
+  if (!moodDone) return _DailyItem.mood;
+  final waterDone = (dashboard.hydration?.consumedMl ?? 0) > 0;
+  if (!waterDone) return _DailyItem.water;
+  final sleepDone = dashboard.sleep?.hoursToday != null;
+  if (!sleepDone) return _DailyItem.sleep;
+  return _DailyItem.none;
+}
+
+/// PaidHomeScreenV2 — phase-themed dashboard for paid users behind the
+/// `useNewPaidHome` feature flag. Phase B2.3 ships only the hero section
+/// (top bar + greeting + LIVE + coming up). The cream body below is a
+/// placeholder that will be filled in subsequent phases (insight, mood,
+/// water, sleep, stats, cycle/nutrition, footer).
+class PaidHomeScreenV2 extends StatefulWidget {
+  const PaidHomeScreenV2({super.key});
+
+  @override
+  State<PaidHomeScreenV2> createState() => _PaidHomeScreenV2State();
+}
+
+class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
+    with WidgetsBindingObserver, RouteAware {
+  final PaidHomeController _controller = Get.find<PaidHomeController>();
+
+  // Bumped whenever this screen becomes visible again after a pushed
+  // screen (Profile, most relevantly) is popped -- see didPopNext()
+  // below. Threaded into PaidHero/PlanFrozenBanner/PlanExpiryBanner as
+  // part of their Key so a bump forces Flutter to dispose and recreate
+  // them, re-running their initState() freeze/expiry-status fetch.
+  // Those widgets intentionally manage their own state independently
+  // (self-contained fetch-on-mount pattern used throughout this screen)
+  // rather than reading from _controller's dashboard, so simply calling
+  // _controller.refreshDashboard() on return would NOT have picked up a
+  // freeze/unfreeze done on Profile -- only remounting them does.
+  int _refreshGen = 0;
+
+  // Guided scroll: after she logs her feeling the screen glides down to
+  // water and sleep; once those are done it glides on to the stats row.
+  // Only once per step per day, never while she is scrolling herself.
+  final GlobalKey _waterSleepKey = GlobalKey();
+  final GlobalKey _statsKey = GlobalKey();
+  _DailyItem? _lastNextUp;
+  static final Set<String> _guidedToday = {};
+
+  void _maybeGuideScroll(_DailyItem nextUp) {
+    final prev = _lastNextUp;
+    _lastNextUp = nextUp;
+    if (prev == null || prev == nextUp) return;
+
+    GlobalKey? target;
+    String? step;
+    if (prev == _DailyItem.mood) {
+      target = _waterSleepKey;
+      step = 'afterFeeling';
+    } else if ((prev == _DailyItem.water || prev == _DailyItem.sleep) &&
+        nextUp == _DailyItem.none) {
+      target = _statsKey;
+      step = 'afterSleep';
+    }
+    if (target == null || step == null) return;
+
+    final day = DateTime.now().toIso8601String().substring(0, 10);
+    if (!_guidedToday.add('$day:$step')) return;
+
+    final key = target;
+    // A short pause so she sees her tap land (and the tip appear) first.
+    Future.delayed(const Duration(milliseconds: 500), () {
+      final ctx = key.currentContext;
+      if (!mounted || ctx == null) return;
+      final scrollable = Scrollable.maybeOf(ctx);
+      if (scrollable != null &&
+          scrollable.position.isScrollingNotifier.value) {
+        return;
+      }
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 550),
+        curve: Curves.easeInOutCubic,
+        // Only moves if the card is below the screen, and only as far as
+        // needed to show all of it.
+        alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+      );
+    });
+  }
+
+  // Step 4-style sync layers — same pattern as the workout schedule.
+  // Heartbeat keeps live/comingUp data fresh when the realtime socket
+  // is offline; foreground + reconnect triggers cover the long-tail
+  // cases (resume from background, network drop). _lastContactAt
+  // drives the "Reconnecting…" banner.
+  Timer? _heartbeatTimer;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  DateTime? _lastContactAt;
+  // Guard against overlapping heartbeats. The 30s timer + foreground
+  // resume + connectivity-reconnect triggers can all fire in tight
+  // succession on flaky networks; without this, multiple concurrent
+  // dashboard fetches stack up and a later one's success can mask an
+  // earlier failure.
+  bool _heartbeatInFlight = false;
+
+  static const Duration _kHeartbeatInterval = Duration(seconds: 30);
+  static const Duration _kStaleAfter = Duration(seconds: 60);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_controller.dashboard.value == null) {
+        _controller.loadDashboard().then((_) {
+          if (mounted) setState(() => _lastContactAt = AppClock.now());
+        });
+      } else {
+        _lastContactAt = AppClock.now();
+      }
+    });
+
+    _heartbeatTimer = Timer.periodic(_kHeartbeatInterval, (_) => _heartbeat());
+
+    _connectivitySub = Connectivity()
+        .onConnectivityChanged
+        .listen(_onConnectivityChanged);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      routeObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void dispose() {
+    routeObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
+    _heartbeatTimer?.cancel();
+    _connectivitySub?.cancel();
+    super.dispose();
+  }
+
+  // RouteAware -- fires when a screen pushed on top of this one (e.g.
+  // Get.to(() => ProfileScreenUser()) from the hero top bar, or from
+  // PlanFrozenBanner's own "Manage" button) is popped and this Home
+  // screen is visible again. This is specifically what Shaista asked
+  // for: freezing/unfreezing on Profile and coming back to Home should
+  // show the correct paused/active state right away, not only after a
+  // full app restart or the next 30s heartbeat tick.
+  @override
+  void didPopNext() {
+    _heartbeat(reason: 'route-return');
+    if (mounted) setState(() => _refreshGen++);
+  }
+
+  Future<void> _heartbeat({String reason = 'tick'}) async {
+    if (!mounted || _heartbeatInFlight) return;
+    _heartbeatInFlight = true;
+    try {
+      debugPrint('[PaidHomeV2] heartbeat ($reason)');
+      final ok = await _controller.silentRefresh();
+      if (!mounted || !ok) return;
+      setState(() => _lastContactAt = AppClock.now());
+    } finally {
+      _heartbeatInFlight = false;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _heartbeat(reason: 'resumed');
+    }
+  }
+
+  void _onConnectivityChanged(List<ConnectivityResult> results) {
+    final reachable = results.any((r) => r != ConnectivityResult.none);
+    if (reachable) _heartbeat(reason: 'reconnect');
+  }
+
+  bool get _isStale {
+    if (_lastContactAt == null) return false;
+    return AppClock.now().difference(_lastContactAt!) > _kStaleAfter;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Status-bar styling — single mechanism: AnnotatedRegion. The hero
+    // (PaidHero) has a flat top and paints from y=0 (Scaffold body has no
+    // implicit SafeArea); PaidHeroTopBar already pads its content by
+    // `MediaQuery.padding.top + 14` so bell + avatar clear the system
+    // chrome. With edgeToEdge enabled in main.dart, a transparent
+    // statusBarColor lets the hero's actual phase colour show through
+    // the OS bar — no fake-tint scrim, no imperative SystemChrome push,
+    // no possibility of a stale "mint band" from splash sticking around.
+    return Obx(() {
+      // Even though the per-phase colour is no longer wired into the
+      // status bar, we still rebuild on dashboard changes so AnnotatedRegion
+      // refreshes if anything else (icon brightness, etc.) ever needs to.
+      _controller.dashboard.value;
+
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: const SystemUiOverlayStyle(
+          // Transparent so the hero's dark phase colour paints the strip.
+          statusBarColor: Colors.transparent,
+          // Android: light icons render white on dark hero.
+          statusBarIconBrightness: Brightness.light,
+          // iOS: `Brightness.dark` reads as "the surface is dark" — system
+          // renders status-bar content in white. Platform-inverted naming.
+          statusBarBrightness: Brightness.dark,
+        ),
+        child: Scaffold(
+          // Cream body bg matches the H-01 reference scroll area below the
+          // hero. Unchanged.
+          backgroundColor: const Color(0xFFEAF7E4),
+          // Phase 2D wiring (consultation flow):
+          //   • PendingPopupOrchestrator watches dashboard.pendingPopups
+          //     and dispatches the right sheet by variable name.
+          body: PendingPopupOrchestrator(
+            // Inactivity popup's "View today's classes" CTA — switch the
+            // bottom-bar to the Workout tab so the user lands on their
+            // schedule. WorkPlansOfUser → tap into the plan → today's class.
+            onOpenWorkoutSchedule: () =>
+                Get.offAll<dynamic>(() => BottomBarScreen(index: 1)),
+            child: _bodyStack(),
+          ),
+        ),
+      );
+    });
+  }
+
+
+  Widget _bodyStack() {
+    return Stack(
+      children: [
+        _buildBody(),
+        // Reconnecting banner — overlay so it stays pinned at
+        // the top of the screen instead of scrolling away with
+        // the hero. SafeArea so it clears the status bar.
+        if (_isStale)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              bottom: false,
+              child: _buildReconnectingBanner(),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // Slim amber pill shown when no successful heartbeat in [_kStaleAfter].
+  // Same styling intent as the workout schedule banner so users see
+  // consistent reconnecting feedback wherever they are in the app.
+  Widget _buildReconnectingBanner() {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
+      color: const Color(0xFFFAC775),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 12.w,
+            height: 12.w,
+            child: const CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+          ),
+          SizedBox(width: 8.w),
+          Text(
+            'Reconnecting…',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 12.sp,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    return Obx(() {
+      if (_controller.isLoading.value &&
+          _controller.dashboard.value == null) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      final dashboard = _controller.dashboard.value;
+      if (dashboard == null) {
+        return Center(
+          child: Text(
+            _controller.errorMessage.value.isEmpty
+                ? 'No data'
+                : _controller.errorMessage.value,
+            style: const TextStyle(color: Colors.black54),
+          ),
+        );
+      }
+      final hasCycle = dashboard.cycle?.cycleDay != null;
+      final nextUp = _nextDailyItem(dashboard);
+      _maybeGuideScroll(nextUp);
+      return RefreshIndicator(
+          onRefresh: _controller.refreshDashboard,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            child: Column(
+              children: [
+                PaidHero(
+                  key: ValueKey('hero_$_refreshGen'),
+                  dashboard: dashboard,
+                ),
+                // Renewal heads-up — same "self-hides, own margin" sibling
+                // pattern as V2Day7TriggerBanner right below. Sits above it
+                // so a lapsing/expired plan is the first thing a user sees
+                // under the hero, ahead of the day-7 check-in nudge.
+                // Free trial: "Day 2 of 3" + Upgrade. Self-hides for paid.
+                const V2TrialBanner(),
+                PlanExpiryBanner(key: ValueKey('expiry_$_refreshGen')),
+                // "Your plan is being prepared, expected by ..." between
+                // consultation and delivery. Self-hides otherwise.
+                V2PlanPreparingBanner(key: ValueKey('preparing_$_refreshGen')),
+                // Frozen-plan heads-up -- item #1 of the frozen-plan
+                // architecture pass. Sits right below the renewal banner;
+                // in practice the two never show at once (a frozen plan's
+                // expireDate was already pushed out at freeze time), but
+                // each self-hides independently so there's no ordering
+                // dependency between them.
+                PlanFrozenBanner(
+                  key: ValueKey('frozen_$_refreshGen'),
+                  // Unfreezing right here (no navigation involved) needs
+                  // the same PaidHero remount that didPopNext() triggers
+                  // for the "unfroze on Profile, came back" path -- see
+                  // PlanFrozenBanner.onUnfrozen's doc comment.
+                  onUnfrozen: () {
+                    if (mounted) setState(() => _refreshGen++);
+                  },
+                ),
+                // Cream scroll body. Insight card is the first section;
+                // everything below the `SizedBox` is a placeholder that
+                // future phases fill in (mood, water/sleep, stats, etc.).
+                // Phase H — Day 7 check-in trigger. Mounted as a
+                // sibling of the cream-body Padding (not inside it)
+                // because V2Day7TriggerBanner already has its own
+                // 16w margin — putting it inside the 16-padded inner
+                // Column would double-pad. Self-hides when ineligible,
+                // so this slot only contributes layout on Day 7+.
+                const V2Day7TriggerBanner(),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      PaidInsightCard(dashboard: dashboard),
+                      const SizedBox(height: 8),
+                      // "Today's insights" box: feeling, water and sleep.
+                      // Inputs stay open until all three are logged, then
+                      // it folds into three tiles. The soft glow still
+                      // points at the next unfilled input.
+                      TodayInsightsBox(
+                        dashboard: dashboard,
+                        glowMood: nextUp == _DailyItem.mood,
+                        glowWater: nextUp == _DailyItem.water,
+                        glowSleep: nextUp == _DailyItem.sleep,
+                        waterSleepKey: _waterSleepKey,
+                      ),
+                      const SizedBox(height: 8),
+                      KeyedSubtree(
+                        key: _statsKey,
+                        child: PaidStatsRow(dashboard: dashboard),
+                      ),
+                      const SizedBox(height: 8),
+                      // Meals now lives in the stats row above (with
+                      // calories), so the cycle card has this row to itself.
+                      if (hasCycle) PaidCycleCard(dashboard: dashboard),
+                      const SizedBox(height: 8),
+                      PaidFooter(dashboard: dashboard),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+    });
+  }
+}

@@ -1654,7 +1654,7 @@ class _AiInsightsCard extends StatelessWidget {
     );
   }
 
-  /// Header row — 🤖 icon-tile + "FitHer AI" + "{N} tips for your phase".
+  /// Header row: 🌙 icon tile + "Luna by FitHer" + "{N} tips for your phase".
   /// Mirrors design lines 305-311.
   Widget _aiHeader(int tipCount) {
     return Row(
@@ -1668,14 +1668,14 @@ class _AiInsightsCard extends StatelessWidget {
             border: Border.all(color: _kHeroAccent.withOpacity(0.20)),
           ),
           alignment: Alignment.center,
-          child: const Text('🤖', style: TextStyle(fontSize: 14)),
+          child: const Text('🌙', style: TextStyle(fontSize: 14)),
         ),
         const SizedBox(width: 9),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'FitHer AI',
+              'Luna by FitHer',
               style: TextStyle(
                 fontFamily: 'Poppins',
                 fontSize: 12,

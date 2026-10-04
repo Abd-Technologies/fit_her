@@ -17,6 +17,7 @@ import 'auth_controller/auth_controller.dart';
 import 'socket_time_block.dart';
 
 class SocketController extends GetxController {
+  final Map<String, DateTime> _recentLikeEvents = {};
   IO.Socket? socket;
 
   HomeController homeController = Get.find();
@@ -159,20 +160,49 @@ class SocketController extends GetxController {
     });
 
     socket?.on("toggleLike", (message) {
-      if (message != null) {
-        final post = Get.find<PostController>().postsList.firstWhereOrNull((p) => p.id == int.parse(message["postId"]));
-        print('SocketController.socketInit ${post}');
-        if (post != null) {
-          if (message["like"]) {
-            post.likesCount.value++;
-          } else {
-            if (post.likesCount.value > 0) {
-              post.likesCount.value--;
-            }
-          }
-          Get.find<PostController>().postsList.refresh();
+      if (message is! Map) return;
+      final postId = int.tryParse('${message["postId"]}');
+      if (postId == null) return;
+      final liked = message["like"] == true;
+      final who = '${message["userId"]}';
+      // Our own likes are already applied on tap (PostController.likePost).
+      final me = Get.find<AuthController>().logInUser?.id;
+      if (who.isNotEmpty && who != 'null' && who == '$me') return;
+      // The server sends the same event to the feed room and the post room;
+      // count it once.
+      final key = '$postId:$who:$liked';
+      final now = DateTime.now();
+      final last = _recentLikeEvents[key];
+      if (last != null && now.difference(last).inMilliseconds < 1500) return;
+      _recentLikeEvents[key] = now;
+      final pc = Get.find<PostController>();
+      final post = pc.postsList.firstWhereOrNull((p) => p.id == postId);
+      if (post != null) {
+        if (liked) {
+          post.likesCount.value++;
+        } else if (post.likesCount.value > 0) {
+          post.likesCount.value--;
         }
+        pc.postsList.refresh();
       }
+    });
+
+    socket?.on("postUpdated", (message) {
+      if (message is! Map<String, dynamic>) return;
+      final pc = Get.find<PostController>();
+      final updated = Post.fromJson(message);
+      final i = pc.postsList.indexWhere((p) => p.id == updated.id);
+      if (i >= 0) {
+        pc.postsList[i] = updated;
+        pc.postsList.refresh();
+      }
+    });
+
+    socket?.on("postDeleted", (message) {
+      if (message is! Map) return;
+      final id = int.tryParse('${message["id"]}');
+      if (id == null) return;
+      Get.find<PostController>().postsList.removeWhere((p) => p.id == id);
     });
   }
 

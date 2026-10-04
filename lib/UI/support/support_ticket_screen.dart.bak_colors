@@ -1,0 +1,520 @@
+// One support ticket: progress, her message, support replies,
+// "Did this solve your issue?" and replying in the same ticket.
+
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+
+import 'report_issue_screen.dart' show SupportStatusBadge;
+import 'support_api.dart';
+
+const _bg = Color(0xFFF5F8F3);
+const _ink = Color(0xFF163220);
+const _muted = Color(0xFF7D8B80);
+const _line = Color(0xFFE3ECE0);
+const _green = Color(0xFF3F9B6A);
+const _bubbleUser = Color(0xFF4AA877);
+
+TextStyle _t(double size, FontWeight w, Color c) =>
+    TextStyle(fontFamily: 'Poppins', fontSize: size, fontWeight: w, color: c);
+
+class SupportTicketScreen extends StatefulWidget {
+  final int ticketId;
+  const SupportTicketScreen({super.key, required this.ticketId});
+
+  @override
+  State<SupportTicketScreen> createState() => _SupportTicketScreenState();
+}
+
+class _SupportTicketScreenState extends State<SupportTicketScreen> {
+  SupportTicket? _ticket;
+  bool _loading = true;
+  bool _replying = false;
+  bool _sending = false;
+  final _reply = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _reply.addListener(() => setState(() {}));
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _reply.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    SupportTicket? t;
+    try {
+      t = await SupportApi.get(widget.ticketId);
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _ticket = t;
+      _loading = false;
+    });
+    SupportApi.refreshUnread(); // opening clears its red dot
+  }
+
+  Future<void> _sendReply() async {
+    final text = _reply.text.trim();
+    if (text.isEmpty || _sending) return;
+    setState(() => _sending = true);
+    SupportTicket? t;
+    try {
+      t = await SupportApi.reply(widget.ticketId, text);
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _sending = false);
+    if (t == null) {
+      Get.snackbar('Could not send', 'Please try again.', snackPosition: SnackPosition.BOTTOM);
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _ticket = t;
+      _replying = false;
+      _reply.clear();
+    });
+  }
+
+  Future<void> _solved() async {
+    final ok = await SupportApi.feedback(widget.ticketId, true);
+    if (!ok) {
+      Get.snackbar('Could not save', 'Please try again.', snackPosition: SnackPosition.BOTTOM);
+      return;
+    }
+    Get.snackbar('Glad we could help', 'Thanks for letting us know.',
+        snackPosition: SnackPosition.BOTTOM);
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _bg,
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            _header(),
+            Expanded(child: _body()),
+            if (_ticket != null && _replying) _composer(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _header() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Row(
+        children: [
+          InkWell(
+            onTap: () => Get.back<void>(),
+            borderRadius: BorderRadius.circular(20),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                border: Border.all(color: _line),
+              ),
+              child: const Icon(Icons.chevron_left_rounded, color: _ink, size: 22),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Report #${widget.ticketId}', style: _t(16, FontWeight.w700, _ink)),
+                if (_ticket != null)
+                  Text(supportCategoryLabel(_ticket!.category),
+                      style: _t(11, FontWeight.w400, _muted)),
+              ],
+            ),
+          ),
+          if (_ticket != null) SupportStatusBadge(status: _ticket!.status),
+        ],
+      ),
+    );
+  }
+
+  Widget _body() {
+    if (_loading) {
+      return const Center(
+        child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(_green)),
+      );
+    }
+    final t = _ticket;
+    if (t == null) {
+      return Center(
+        child: TextButton(
+          onPressed: () {
+            setState(() => _loading = true);
+            _load();
+          },
+          child: Text("Couldn't load. Tap to try again", style: _t(13, FontWeight.w600, _green)),
+        ),
+      );
+    }
+    final lastIsStaff = t.messages.isNotEmpty && !t.messages.last.isUser;
+    // Support answered (or closed it) and she hasn't written since.
+    final answered = lastIsStaff || t.status == 'resolved';
+
+    return RefreshIndicator(
+      color: _green,
+      onRefresh: _load,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: [
+          _progress(t),
+          const SizedBox(height: 18),
+          // Her original report
+          _bubble(
+            isUser: true,
+            name: 'You',
+            date: t.createdAt,
+            body: t.message,
+            imageUrl: t.imageUrl,
+          ),
+          for (final m in t.messages)
+            _bubble(
+              isUser: m.isUser,
+              name: m.isUser ? 'You' : (m.senderName ?? 'FitHer Support'),
+              date: m.createdAt,
+              body: m.body,
+              imageUrl: m.imageUrl,
+            ),
+          const SizedBox(height: 6),
+          if (t.feedback == 'solved')
+            _solvedNote()
+          else if (answered && !_replying)
+            _solvedQuestion()
+          else if (!answered)
+            _waitingNote(t),
+          if (!_replying && t.feedback != 'solved' && !answered)
+            Center(
+              child: TextButton(
+                onPressed: () => setState(() => _replying = true),
+                child: Text('Add more details', style: _t(12.5, FontWeight.w600, _green)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _progress(SupportTicket t) {
+    final step = t.status == 'resolved' ? 2 : (t.status == 'in_review' ? 1 : 0);
+    Widget dot(int i, String label, String sub) {
+      final done = i <= step;
+      return Expanded(
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    height: 3,
+                    color: i == 0 ? Colors.transparent : (done ? _green : _line),
+                  ),
+                ),
+                Container(
+                  width: 22,
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: done ? _green : Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: done ? _green : _line, width: 2),
+                  ),
+                  child: done ? const Icon(Icons.check_rounded, size: 13, color: Colors.white) : null,
+                ),
+                Expanded(
+                  child: Container(
+                    height: 3,
+                    color: i == 2 ? Colors.transparent : (i < step ? _green : _line),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(label, style: _t(11, FontWeight.w600, done ? _ink : _muted)),
+            Text(sub, style: _t(9.5, FontWeight.w400, _muted)),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _line),
+      ),
+      child: Row(
+        children: [
+          dot(0, 'Received', supportShortDate(t.createdAt)),
+          dot(1, 'In review', step >= 1 ? 'By our team' : ''),
+          dot(2, 'Resolved',
+              step == 2 ? supportShortDate(t.resolvedAt) : 'By ${supportDay(t.dueAt)}'),
+        ],
+      ),
+    );
+  }
+
+  Widget _bubble({
+    required bool isUser,
+    required String name,
+    DateTime? date,
+    String? body,
+    String? imageUrl,
+  }) {
+    final hasBody = (body ?? '').trim().isNotEmpty;
+    final hasImg = (imageUrl ?? '').isNotEmpty;
+    if (!hasBody && !hasImg) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (!isUser) ...[
+            Container(
+              width: 28,
+              height: 28,
+              decoration: const BoxDecoration(color: Color(0xFFE3F4E7), shape: BoxShape.circle),
+              child: const Icon(Icons.headset_mic_outlined, size: 15, color: _green),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Flexible(
+            child: Column(
+              crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                Container(
+                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: isUser ? _bubbleUser : Colors.white,
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(16),
+                      topRight: const Radius.circular(16),
+                      bottomLeft: Radius.circular(isUser ? 16 : 4),
+                      bottomRight: Radius.circular(isUser ? 4 : 16),
+                    ),
+                    border: isUser ? null : Border.all(color: _line),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (hasBody)
+                        Text(body!.trim(),
+                            style: _t(12.5, FontWeight.w400, isUser ? Colors.white : _ink)
+                                .copyWith(height: 1.4)),
+                      if (hasImg) ...[
+                        if (hasBody) const SizedBox(height: 8),
+                        GestureDetector(
+                          onTap: () => _viewImage(imageUrl!),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.network(
+                              imageUrl!,
+                              width: 140,
+                              height: 170,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                width: 140,
+                                height: 60,
+                                alignment: Alignment.center,
+                                color: Colors.white24,
+                                child: Text('Screenshot',
+                                    style: _t(11, FontWeight.w500,
+                                        isUser ? Colors.white : _muted)),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text('$name · ${supportShortDate(date)}', style: _t(10, FontWeight.w400, _muted)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _viewImage(String url) {
+    Get.dialog<void>(
+      GestureDetector(
+        onTap: () => Get.back<void>(),
+        child: InteractiveViewer(child: Center(child: Image.network(url))),
+      ),
+    );
+  }
+
+  Widget _waitingNote(SupportTicket t) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7E6),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF3DDA8)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.hourglass_empty_rounded, size: 18, color: Color(0xFF9A7414)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              "Our team is looking into it. We'll notify you in the app by ${supportDay(t.dueAt)} at the latest.",
+              style: _t(11.5, FontWeight.w400, const Color(0xFF6B5A2E)).copyWith(height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _solvedQuestion() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _line),
+      ),
+      child: Column(
+        children: [
+          Text('Did this solve your issue?', style: _t(13, FontWeight.w700, _ink)),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 42,
+                  child: ElevatedButton(
+                    onPressed: _solved,
+                    style: ElevatedButton.styleFrom(
+                      elevation: 0,
+                      backgroundColor: _bubbleUser,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: Text('Yes, thanks', style: _t(12.5, FontWeight.w700, Colors.white)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: SizedBox(
+                  height: 42,
+                  child: OutlinedButton(
+                    onPressed: () => setState(() => _replying = true),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: _line),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    child: Text('No, reply', style: _t(12.5, FontWeight.w600, _ink)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _solvedNote() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE3F4E7),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.check_circle_outline_rounded, size: 18, color: _green),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text("Glad it's sorted. You can always send a new report.",
+                style: _t(11.5, FontWeight.w500, const Color(0xFF2F6B47))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _composer() {
+    final can = _reply.text.trim().isNotEmpty && !_sending;
+    return Container(
+      padding: EdgeInsets.fromLTRB(12, 10, 12, 10 + MediaQuery.of(context).padding.bottom),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: _line)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _reply,
+              autofocus: true,
+              minLines: 1,
+              maxLines: 4,
+              maxLength: 1000,
+              style: _t(13, FontWeight.w400, _ink),
+              decoration: InputDecoration(
+                counterText: '',
+                hintText: 'Write your reply',
+                hintStyle: _t(12.5, FontWeight.w400, const Color(0xFFB2BCB3)),
+                filled: true,
+                fillColor: _bg,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 44,
+            height: 44,
+            child: ElevatedButton(
+              onPressed: can ? _sendReply : null,
+              style: ElevatedButton.styleFrom(
+                elevation: 0,
+                padding: EdgeInsets.zero,
+                backgroundColor: _bubbleUser,
+                disabledBackgroundColor: const Color(0xFFA8D5BC),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              child: _sending
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.send_rounded, size: 18, color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
