@@ -760,4 +760,13 @@ class AnalyticsService extends GetxService {
       if (linkType != null) 'link_type': linkType,
     });
   }
+
+  /// Delivery 1 — generic named event from [AnalyticsEvents] catalog (1A1).
+  Future<void> track(String event, {Map<String, dynamic>? props}) async {
+    final cleaned = <String, dynamic>{};
+    props?.forEach((k, v) {
+      if (v != null) cleaned[k] = v;
+    });
+    await _mixpanel?.track(event, properties: cleaned.isEmpty ? null : cleaned);
+  }
 }

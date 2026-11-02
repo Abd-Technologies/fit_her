@@ -101,6 +101,8 @@ class Slot {
   String? token;
   String? status;
   bool? isTrainerJoined;
+  /// X2 — live class tags (optional until backend fills them).
+  List<String> tags;
 
   Slot(
       {required this.id,
@@ -114,7 +116,8 @@ class Slot {
       this.status,
       this.isTrainerJoined,
       this.level,
-      this.description});
+      this.description,
+      this.tags = const []});
 
   factory Slot.fromJson(Map<String, dynamic> json) => Slot(
         id: json["id"],
@@ -145,6 +148,10 @@ class Slot {
         trainer: json["trainer"] == null
             ? null
             : ClientUser.fromJson(json["trainer"]),
+        tags: (json["tags"] as List<dynamic>?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            const [],
       );
 
   Map<String, dynamic> toJson() => {
@@ -160,5 +167,20 @@ class Slot {
         "joinedUserUID": joinedUserUID,
         "isTrainerJoined": isTrainerJoined,
         "trainer": trainer?.toJson(),
+        "tags": tags,
       };
+
+  /// Derived filter helpers for intensity / focus / style / phase tags.
+  String? get intensityTag {
+    for (final t in tags) {
+      final lower = t.toLowerCase();
+      if (lower == 'easy' ||
+          lower == 'moderate' ||
+          lower == 'hard' ||
+          lower == 'gentle') {
+        return lower;
+      }
+    }
+    return level?.toLowerCase();
+  }
 }

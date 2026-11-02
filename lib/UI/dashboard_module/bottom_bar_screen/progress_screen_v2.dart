@@ -7,7 +7,9 @@ import '../../../data/Repos/progress_v2/progress_repository.dart';
 import '../../../data/api_provider/api_provider.dart';
 import '../../../data/controllers/auth_controller/auth_controller.dart';
 import '../../../data/controllers/cycle_theme_controller/cycle_theme_controller.dart';
+import '../../../data/controllers/daily_log_controller/daily_log_controller.dart';
 import '../../../data/controllers/progress_v2/progress_controller_v2.dart';
+import '../../../data/models/daily_log/symptom_log.dart';
 import '../../../data/models/progress_v2/progress_models.dart';
 import '../../../helper/analytics_helper.dart';
 import '../../../services/progress_report_pdf_service.dart';
@@ -1489,57 +1491,51 @@ class _HydrationCard extends StatelessWidget {
 class _SymptomsCard extends StatelessWidget {
   const _SymptomsCard();
 
-  // Static rows mirror docs/Progress_v1_AsBuildable.html lines 277-301.
-  // Backend SymptomDelta requires ≥5 datapoints in BOTH current and
-  // previous period and returns empty-state for early users — these
-  // hardcoded values match the design's reference data so the card
-  // never renders blank.
-  static const List<_StaticSymptom> _staticRows = [
-    _StaticSymptom(
-      label: 'Bloating',
-      pct: 0.35,
-      barColor: Color(0xFFFF8A8A),
-      deltaPct: -40,
-    ),
-    _StaticSymptom(
-      label: 'Energy',
-      pct: 0.78,
-      barColor: Color(0xFF6DC55A),
-      deltaPct: 60,
-    ),
-    _StaticSymptom(
-      label: 'Mood',
-      pct: 0.68,
-      barColor: Color(0xFF6DC55A),
-      deltaPct: 45,
-    ),
-    _StaticSymptom(
-      label: 'Cramps',
-      pct: 0.22,
-      barColor: Color(0xFFFF8A8A),
-      deltaPct: -60,
-    ),
-  ];
-
   @override
   Widget build(BuildContext context) {
+    Map<String, double> averages = {};
+    if (Get.isRegistered<DailyLogController>()) {
+      averages = Get.find<DailyLogController>().symptomAverages(days: 30);
+    }
+
+    final rows = <_StaticSymptom>[];
+    averages.forEach((key, pct) {
+      final label = SymptomLog.labels[key] ?? key;
+      rows.add(_StaticSymptom(
+        label: label,
+        pct: pct.clamp(0.05, 1.0),
+        barColor: pct >= 0.5 ? const Color(0xFFFF8A8A) : const Color(0xFF6DC55A),
+        deltaPct: 0,
+      ));
+    });
+
     return _CardShell(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const _CardTitle('Symptoms this month'),
           const SizedBox(height: 12),
-          ..._staticRows.map((s) => Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: TrendBar(
-                  label: s.label,
-                  pct: s.pct,
-                  color: s.barColor,
-                  trailingText: '${(s.pct * 100).round()}%',
-                  deltaPct: s.deltaPct,
-                  deltaIsImprovement: true,
-                ),
-              )),
+          if (rows.isEmpty)
+            const Text(
+              'Log symptoms from Home to see your month here.',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 12,
+                color: _kTextMuted,
+              ),
+            )
+          else
+            ...rows.map((s) => Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: TrendBar(
+                    label: s.label,
+                    pct: s.pct,
+                    color: s.barColor,
+                    trailingText: '${(s.pct * 100).round()}%',
+                    deltaPct: s.deltaPct,
+                    deltaIsImprovement: true,
+                  ),
+                )),
         ],
       ),
     );

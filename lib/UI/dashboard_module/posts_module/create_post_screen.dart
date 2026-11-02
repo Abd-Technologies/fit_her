@@ -9,6 +9,9 @@ import 'package:image_picker/image_picker.dart';
 import '../../../data/controllers/auth_controller/auth_controller.dart';
 import '../../../data/controllers/post_controller.dart';
 import '../../../data/models/post_model.dart';
+import '../../../data/services/community_moderation_service.dart';
+import '../../../helper/analytics_helper.dart';
+import '../../../data/analytics/analytics_events.dart';
 import '../../../helper/permissions.dart';
 import '../../../widgets/toasts.dart';
 import 'feed_widgets.dart';
@@ -35,6 +38,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   File? _newImage;
   String? _oldImageUrl; // editing: the photo already on the post
   bool _busy = false;
+  bool _postAnonymous = false;
 
   bool get _editing => widget.editing != null;
   bool get _hasImage => _newImage != null || _oldImageUrl != null;
@@ -101,11 +105,34 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       return;
     }
 
+    // 1P1 — client first-pass moderation before create.
+    var postText = text;
+    var anonymous = false;
+    if (Get.isRegistered<CommunityModerationService>()) {
+      final mod = Get.find<CommunityModerationService>();
+      if (mod.scanPost(text)) {
+        await mod.markFlaggedLocally('pending_${DateTime.now().millisecondsSinceEpoch}');
+        CustomToast.successToast(
+          msg:
+              'Thanks — this post was flagged for a quick team review before it shows.',
+        );
+      }
+    }
+    // Optional anonymous posting (1P4): prefix marker consumed by backend later.
+    if (_postAnonymous) {
+      anonymous = true;
+      postText = '[anon] $text';
+    }
+
     controller.postImageFile = _newImage;
-    final post = await controller.createPost(text: text);
+    final post = await controller.createPost(text: postText);
     if (!mounted) return;
     setState(() => _busy = false);
     if (post == null) return;
+    await AnalyticsHelper.track(AnalyticsEvents.postCreated, props: {
+      'anonymous': anonymous,
+      'approved': post.approved,
+    });
     // Members' photo posts are checked by the team before they show.
     if (!post.approved) {
       CustomToast.successToast(msg: "Thanks! Your post will show once our team has had a quick look.");
@@ -207,6 +234,17 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                       ],
                     ),
                     SizedBox(height: 12.h),
+                    if (!_editing)
+                      SwitchListTile.adaptive(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text('Post anonymously',
+                            style: feedText(13, weight: FontWeight.w600)),
+                        subtitle: Text('Your name stays hidden from members',
+                            style: feedText(11, color: kFeedMuted)),
+                        value: _postAnonymous,
+                        activeThumbColor: kFeedGreen,
+                        onChanged: (v) => setState(() => _postAnonymous = v),
+                      ),
                     TextField(
                       controller: _text,
                       autofocus: !widget.openCamera && !_editing,

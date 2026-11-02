@@ -25,7 +25,19 @@ import 'package:fitness_zone_2/data/controllers/motivation_controller/motivation
 import 'package:fitness_zone_2/data/controllers/zoom_controller.dart';
 import 'package:fitness_zone_2/data/services/youtube_tutorial_service.dart';
 import 'package:fitness_zone_2/data/services/analytics_service.dart';
+import 'package:fitness_zone_2/data/services/offline_sync_queue.dart';
 import 'package:fitness_zone_2/data/services/timezone_sync_service.dart';
+import 'package:fitness_zone_2/data/repos/daily_log_repo/daily_log_repository.dart';
+import 'package:fitness_zone_2/data/controllers/daily_log_controller/daily_log_controller.dart';
+import 'package:fitness_zone_2/data/services/tier_access_service.dart';
+import 'package:fitness_zone_2/data/services/food_db_service.dart';
+import 'package:fitness_zone_2/data/services/food_diary_service.dart';
+import 'package:fitness_zone_2/data/services/luna_insight_service.dart';
+import 'package:fitness_zone_2/data/services/behavior_signal_service.dart';
+import 'package:fitness_zone_2/data/services/community_moderation_service.dart';
+import 'package:fitness_zone_2/data/services/smart_reminder_service.dart';
+import 'package:fitness_zone_2/guided_workout/guided_workout_controller.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -58,6 +70,33 @@ Future init() async {
   ///Services
   Get.lazyPut(() => YouTubeTutorialService());
   Get.lazyPut(() => AnalyticsService());
+  Get.lazyPut(() => OfflineSyncQueue(prefs: sharedPreferences));
+  Get.lazyPut(() => FoodDbService());
+  Get.lazyPut(() => TierAccessService(prefs: sharedPreferences));
+  Get.lazyPut(() => BehaviorSignalService(prefs: sharedPreferences));
+  Get.lazyPut(() => LunaInsightService(prefs: sharedPreferences));
+  Get.lazyPut(
+      () => CommunityModerationService(prefs: sharedPreferences));
+  Get.lazyPut(
+    () => FoodDiaryService(
+      prefs: sharedPreferences,
+      foodDb: Get.find(),
+      tier: Get.find(),
+    ),
+  );
+  Get.lazyPut(
+    () => DailyLogRepository(
+      prefs: sharedPreferences,
+      checkinRepo: Get.find(),
+      syncQueue: Get.find(),
+    ),
+  );
+  Get.lazyPut(
+    () => SmartReminderService(
+      prefs: sharedPreferences,
+      plugin: FlutterLocalNotificationsPlugin(),
+    ),
+  );
 
   // fenix: true on every controller below — survives any GetX scope
   // teardown (logout flow, hot-restart in dev, idle eviction on low-mem
@@ -172,6 +211,17 @@ Future init() async {
       auth: Get.find<AuthController>(),
       repo: Get.find<DietPlanUserRepository>(),
     ),
+    fenix: true,
+  );
+  Get.lazyPut(
+    () => DailyLogController(
+      repo: Get.find(),
+      prefs: sharedPreferences,
+    ),
+    fenix: true,
+  );
+  Get.lazyPut(
+    () => GuidedWorkoutController(prefs: sharedPreferences),
     fenix: true,
   );
   Get.lazyPut(() => ZoomMeetingGetxController(), fenix: true);

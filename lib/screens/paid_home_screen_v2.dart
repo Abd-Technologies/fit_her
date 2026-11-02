@@ -14,7 +14,9 @@ import '../utils/app_clock.dart';
 import '../widgets/paid_home_v2/paid_cycle_card.dart';
 import '../widgets/paid_home_v2/paid_footer.dart';
 import '../widgets/paid_home_v2/paid_hero.dart';
-import '../widgets/paid_home_v2/paid_insight_card.dart';
+import '../widgets/paid_home_v2/luna_five_part_card.dart';
+import '../widgets/paid_home_v2/daily_focus_card.dart';
+import '../widgets/paid_home_v2/first_week_banner.dart';
 import '../widgets/paid_home_v2/paid_stats_row.dart'
     show PaidStatsRow;
 import '../widgets/paid_home_v2/today_insights_box.dart';
@@ -404,7 +406,9 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
                       // Book a call with her dietitian (hides itself when
                       // she has no dietitian or a call is already booked).
                       TalkToExpertCard(key: ValueKey('expert_$_refreshGen')),
-                      PaidInsightCard(dashboard: dashboard),
+                      const FirstWeekBanner(),
+                      const DailyFocusCard(),
+                      LunaFivePartCard(dashboard: dashboard),
                       const SizedBox(height: 8),
                       // "Today's insights" box: feeling, water and sleep.
                       // Inputs stay open until all three are logged, then

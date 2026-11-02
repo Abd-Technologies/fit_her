@@ -519,4 +519,14 @@ class AnalyticsHelper {
       linkType: linkType,
     );
   }
+
+  /// Delivery 1 — track a catalog event (see AnalyticsEvents).
+  static Future<void> track(
+    String event, {
+    Map<String, dynamic>? props,
+  }) async {
+    try {
+      await _analyticsService.track(event, props: props);
+    } catch (_) {}
+  }
 }

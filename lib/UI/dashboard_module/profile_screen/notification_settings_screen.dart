@@ -1,3 +1,4 @@
+import 'package:fitness_zone_2/UI/daily_log/d1_reminder_toggles.dart';
 import 'package:fitness_zone_2/data/api_provider/api_provider.dart';
 import 'package:fitness_zone_2/data/controllers/auth_controller/auth_controller.dart';
 import 'package:fitness_zone_2/data/Repos/checkin_repo/checkin_repository.dart';
@@ -228,6 +229,8 @@ class _NotificationSettingsScreenState
               child: ListView(
                 padding: EdgeInsets.fromLTRB(20.w, 16.h, 20.w, 32.h),
                 children: [
+                  const D1ReminderToggles(),
+                  SizedBox(height: 20.h),
                   Text(
                     'Notification Types',
                     style: TextStyle(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
 
+import '../../../UI/community/report_block_sheet.dart';
 import '../../../UI/plans_module/all_plans.dart';
 import '../../../data/controllers/auth_controller/auth_controller.dart';
 import '../../../data/controllers/post_controller.dart';
@@ -105,11 +106,20 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       Expanded(
                         child: Center(child: Text('Post', style: feedText(16, weight: FontWeight.w700))),
                       ),
-                      if (post != null && feedCanManage(post))
-                        _circleButton(Icons.more_horiz_rounded,
-                            () => showFeedPostOptions(context, post, onDeleted: () => Get.back()))
+                      if (post != null)
+                        _circleButton(
+                          Icons.flag_outlined,
+                          () => showReportBlockSheet(
+                            context,
+                            postId: '${post.id}',
+                            authorId: post.author.id?.toString(),
+                          ),
+                        )
                       else
                         SizedBox(width: 38.w),
+                      if (post != null && feedCanManage(post))
+                        _circleButton(Icons.more_horiz_rounded,
+                            () => showFeedPostOptions(context, post, onDeleted: () => Get.back())),
                     ],
                   ),
                 ),

@@ -14,6 +14,10 @@ class DailyCheckin extends Serializable {
   final int? predictedEnergy;
   final int? predictedMood;
   final String? createdAt;
+  /// Delivery 1 — stress + rested fields (1NH4 / 1NH5).
+  final int? stressLevel;
+  final String? stressCause;
+  final int? sleepRested;
 
   DailyCheckin({
     this.id,
@@ -29,6 +33,9 @@ class DailyCheckin extends Serializable {
     this.predictedEnergy,
     this.predictedMood,
     this.createdAt,
+    this.stressLevel,
+    this.stressCause,
+    this.sleepRested,
   });
 
   factory DailyCheckin.fromJson(Map<String, dynamic> json) {
@@ -46,6 +53,9 @@ class DailyCheckin extends Serializable {
       predictedEnergy: json['predictedEnergy'] as int?,
       predictedMood: json['predictedMood'] as int?,
       createdAt: json['createdAt'] as String?,
+      stressLevel: json['stressLevel'] as int?,
+      stressCause: json['stressCause'] as String?,
+      sleepRested: json['sleepRested'] as int?,
     );
   }
 
@@ -65,6 +75,9 @@ class DailyCheckin extends Serializable {
       'predictedEnergy': predictedEnergy,
       'predictedMood': predictedMood,
       'createdAt': createdAt,
+      'stressLevel': stressLevel,
+      'stressCause': stressCause,
+      'sleepRested': sleepRested,
     };
   }
 
@@ -82,6 +95,9 @@ class DailyCheckin extends Serializable {
     int? predictedEnergy,
     int? predictedMood,
     String? createdAt,
+    int? stressLevel,
+    String? stressCause,
+    int? sleepRested,
   }) {
     return DailyCheckin(
       id: id ?? this.id,
@@ -97,6 +113,9 @@ class DailyCheckin extends Serializable {
       predictedEnergy: predictedEnergy ?? this.predictedEnergy,
       predictedMood: predictedMood ?? this.predictedMood,
       createdAt: createdAt ?? this.createdAt,
+      stressLevel: stressLevel ?? this.stressLevel,
+      stressCause: stressCause ?? this.stressCause,
+      sleepRested: sleepRested ?? this.sleepRested,
     );
   }
 }

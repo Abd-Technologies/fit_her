@@ -132,6 +132,8 @@ flutter:
     - assets/profileImage/
     - assets/svg/
     - assets/
+    - assets/food/
+    - assets/guided_workout/
     - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see
