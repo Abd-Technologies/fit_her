@@ -31,7 +31,12 @@ class DietDetails extends StatelessWidget {
   int? durationId;
 
   final bool isPlan;
-  final List workoutText = ["Early Detection", "Preventive Care", "Personalized Health Advice"];
+  // Wave 0 — avoid medical-claim wording on the plan benefits chips.
+  final List workoutText = const [
+    "Cycle-aware coaching",
+    "Steady habit support",
+    "Personalized fitness guidance",
+  ];
 
   @override
   Widget build(BuildContext context) {

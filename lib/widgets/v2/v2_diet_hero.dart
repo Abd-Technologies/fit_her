@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import '../../data/controllers/auth_controller/auth_controller.dart';
 import '../../data/controllers/cycle_theme_controller/cycle_theme_controller.dart';
 import '../../data/controllers/diet_plan_user_controller/diet_plan_user_controller.dart';
+import '../../utils/display_name.dart';
 import '../new_home/phase_theme.dart';
 
 /// Diet tab hero — colors follow the global CycleThemeController so
@@ -187,10 +188,11 @@ class _Greeting extends StatelessWidget {
   String _firstName() {
     if (!Get.isRegistered<AuthController>()) return 'there';
     final auth = Get.find<AuthController>();
-    // `LoginModel.firstName` is non-nullable; only `logInUser` itself
-    // can be null pre-login. The chain short-circuits cleanly.
-    final n = auth.logInUser?.firstName.trim();
-    return (n == null || n.isEmpty) ? 'there' : n;
+    final user = auth.logInUser;
+    return friendlyDisplayName(
+      firstName: user?.firstName,
+      lastName: user?.lastName,
+    );
   }
 
   @override
@@ -301,7 +303,11 @@ class _DietStatusBlock extends StatelessWidget {
       if (plan == null || ctrl.todaysDayNumber == null) {
         return _emptyState();
       }
-      final today = ctrl.todaysDayNumber!;
+      // Wave 0 D-03 — never render "Day 13 of 7"; clamp + ended state.
+      final rawToday = ctrl.todaysDayNumber!;
+      final ended = ctrl.planHasEnded;
+      final today =
+          ended ? plan.planDays : rawToday.clamp(1, plan.planDays).toInt();
       final remaining = ctrl.daysRemainingInPlan ?? 0;
       final dayMeal = ctrl.todaysDay;
       final kcal = dayMeal?.totalCalories;
@@ -315,7 +321,7 @@ class _DietStatusBlock extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'TODAY',
+                    ended ? 'PLAN' : 'TODAY',
                     style: TextStyle(
                       fontFamily: 'Poppins',
                       fontSize: 10.sp,
@@ -326,7 +332,9 @@ class _DietStatusBlock extends StatelessWidget {
                   ),
                   SizedBox(height: 4.h),
                   Text(
-                    'Day $today of ${plan.planDays}',
+                    ended
+                        ? 'Plan completed'
+                        : 'Day $today of ${plan.planDays}',
                     style: TextStyle(
                       fontFamily: 'Poppins',
                       fontSize: 18.sp,
@@ -337,11 +345,13 @@ class _DietStatusBlock extends StatelessWidget {
                   ),
                   SizedBox(height: 2.h),
                   Text(
-                    remaining == 0
-                        ? 'Last day of plan'
-                        : remaining == 1
-                            ? 'Ends tomorrow'
-                            : '$remaining days left',
+                    ended
+                        ? 'Your ${plan.planDays}-day plan has ended'
+                        : remaining == 0
+                            ? 'Last day of plan'
+                            : remaining == 1
+                                ? 'Ends tomorrow'
+                                : '$remaining days left',
                     style: TextStyle(
                       fontFamily: 'Poppins',
                       fontSize: 12.sp,

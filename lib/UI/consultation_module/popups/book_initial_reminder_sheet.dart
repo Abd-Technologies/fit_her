@@ -32,12 +32,13 @@ class BookInitialReminderSheet extends StatelessWidget {
   /// Caller passes a `onBookNow` that opens the actual booking sheet
   /// (`BookConsultationSheet.show(...)` from popup #1). We don't import
   /// it here to keep file dependencies tight.
-  final VoidCallback onBookNow;
+  /// Wave 0: async so the reminder can fully dismiss before booking opens.
+  final Future<void> Function() onBookNow;
 
   const BookInitialReminderSheet({Key? key, required this.onBookNow})
       : super(key: key);
 
-  static Future<void> show({required VoidCallback onBookNow}) {
+  static Future<void> show({required Future<void> Function() onBookNow}) {
     return V2BottomSheet.show(
       title: "Let's get you started",
       child: BookInitialReminderSheet(onBookNow: onBookNow),
@@ -62,12 +63,13 @@ class BookInitialReminderSheet extends StatelessWidget {
         const SizedBox(height: 20),
         V2PrimaryButton(
           label: 'Book now',
-          onPressed: () {
-            // Do NOT completePopup here — see doc comment above. Just
-            // close and hand off to the booking flow; the server retires
-            // this popup once an Appointment actually exists.
+          onPressed: () async {
+            // Do NOT completePopup here — see doc comment above. Close
+            // this sheet fully, then hand off to booking so two sheets
+            // never stack (Wave 0 U-01).
             Get.back<dynamic>();
-            onBookNow();
+            await Future<void>.delayed(const Duration(milliseconds: 280));
+            await onBookNow();
           },
         ),
         const SizedBox(height: 8),

@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 
 import '../../data/controllers/auth_controller/auth_controller.dart';
 import '../../data/services/cycle_engine.dart';
+import '../../utils/display_name.dart';
 
 class HeroGreetingBlock extends StatelessWidget {
   final String? firstName;
@@ -59,8 +60,8 @@ class HeroGreetingBlock extends StatelessWidget {
     final double hPad = (w * 22 / 414).clamp(16.0, 24.0);
     final double phaseSize = (28 + (w - 360) / 54 * 4).clamp(28.0, 32.0);
 
-    final name = (firstName ?? '').trim().isEmpty ? 'there' : firstName!.trim();
-    final greeting = '${_timeAwareGreeting()}, $name 🌿';
+    final name = friendlyDisplayName(firstName: firstName);
+    final greeting = '${_timeAwareGreeting()}, $name';
 
     final phase = cycleInfo == null ? null : _phaseDisplay(cycleInfo!.phase);
     final dayText = cycleInfo == null ? '—' : 'Day ${cycleInfo!.cycleDay}';

@@ -22,7 +22,22 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- SYSTEM_ALERT_WINDOW kept: Zoom floating meeting / PiP overlay. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Wave 0 — strip dangerous / advertising permissions merged in by
+         dependencies (Facebook SDK, legacy plugins). Health app must not
+         claim phone/IMEI, dialer, or ad-ID access. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" tools:node="remove" />
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_ADSERVICES_AD_ID" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_ADSERVICES_ATTRIBUTION" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_ADSERVICES_CUSTOM_AUDIENCE" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_ADSERVICES_TOPICS" tools:node="remove" />
+    <uses-permission android:name="com.zebra.provider.READ" tools:node="remove" />
+    <uses-permission android:name="com.symbol.emdk.permission.EMDK" tools:node="remove" />
 
     <application
         android:label="Fit Her"
@@ -32,6 +47,10 @@
         android:name=".MyApp"
         android:icon="@mipmap/ic_launcher"
         tools:targetApi="23">
+        <uses-library
+            android:name="com.symbol.emdk"
+            android:required="false"
+            tools:node="remove" />
         <meta-data android:name="com.facebook.sdk.ApplicationId"
             android:value="1559880995342722"/>
         <meta-data

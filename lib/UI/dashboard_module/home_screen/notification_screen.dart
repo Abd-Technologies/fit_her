@@ -47,8 +47,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
                 onPressed: () {
                   authController.markAllNotificationsRead();
                 },
-                color: Colors.red,
-                borderColor: Colors.red,
+                // Wave 0 U-03 — neutral secondary style; reserve red for
+                // destructive actions only.
+                color: const Color(0xFF6F8B7A),
+                borderColor: const Color(0xFF6F8B7A),
               ),
             ),
           );

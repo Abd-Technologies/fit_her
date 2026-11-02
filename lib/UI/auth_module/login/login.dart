@@ -51,8 +51,6 @@ class _LoginState extends State<Login> {
   static const Color _primaryGreen = Color(0xFF6DC55A);
   static const Color _dividerLine = Color(0xFFE5F1E0);
   static const Color _dividerText = Color(0xFF9AB09A);
-  static const Color _teamDividerLine = Color(0xFFEEEEE8);
-  static const Color _teamDividerText = Color(0xFFBCC7BC);
   static const Color _footerText = Color(0xFF9AB09A);
 
   // Show/hide toggle for the password field's eye icon (matches the
@@ -149,12 +147,16 @@ class _LoginState extends State<Login> {
   Widget _buildHero() {
     return Padding(
       padding: EdgeInsets.fromLTRB(36.w, 16.h, 36.w, 24.h),
-      child: SizedBox(
-        height: 68.h,
-        child: Image.asset(
-          MyImgs.fitHerLogo,
-          width: 200.w,
-          fit: BoxFit.contain,
+      child: GestureDetector(
+        // Wave 0 — hidden staff entry (long-press logo).
+        onLongPress: _onTeamAdminTapped,
+        child: SizedBox(
+          height: 68.h,
+          child: Image.asset(
+            MyImgs.fitHerLogo,
+            width: 200.w,
+            fit: BoxFit.contain,
+          ),
         ),
       ),
     );
@@ -197,10 +199,8 @@ class _LoginState extends State<Login> {
             _buildSignInButton(),
             SizedBox(height: 14.h),
             _buildCreateAccountFooter(),
-            SizedBox(height: 18.h),
-            _buildTeamDivider(),
-            SizedBox(height: 12.h),
-            _buildTeamAdminButton(),
+            // Wave 0 — Team/Admin CTA removed from the public login surface.
+            // Staff access: long-press the Fit Her logo in the hero.
           ],
         ),
       ),
@@ -564,88 +564,8 @@ class _LoginState extends State<Login> {
     );
   }
 
-  // ── Team divider ───────────────────────────────────────────────────────
-  Widget _buildTeamDivider() {
-    return Row(
-      children: [
-        const Expanded(child: Divider(color: _teamDividerLine, height: 1, thickness: 1)),
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 10.w),
-          child: Text(
-            'OR',
-            style: TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 10.5.sp,
-              color: _teamDividerText,
-              fontWeight: FontWeight.w500,
-              letterSpacing: 0.42, // 0.04em × 10.5
-            ),
-          ),
-        ),
-        const Expanded(child: Divider(color: _teamDividerLine, height: 1, thickness: 1)),
-      ],
-    );
-  }
-
-  // ── Team/Admin button — validate, then bottom-sheet picker ────────────
-  Widget _buildTeamAdminButton() {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton(
-        style: OutlinedButton.styleFrom(
-          backgroundColor: Colors.white,
-          padding: EdgeInsets.symmetric(vertical: 14.h),
-          side: const BorderSide(color: _textDark, width: 1.5),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        onPressed: _onTeamAdminTapped,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 22.w,
-              height: 22.w,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: _textDark,
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                Icons.settings,
-                size: 12.w,
-                color: _primaryGreen,
-              ),
-            ),
-            SizedBox(width: 10.w),
-            Text(
-              'Login as Team / Admin',
-              style: TextStyle(
-                fontFamily: 'Poppins',
-                fontSize: 13.5.sp,
-                fontWeight: FontWeight.w700,
-                color: _textDark,
-              ),
-            ),
-            SizedBox(width: 8.w),
-            Text(
-              '→',
-              style: TextStyle(
-                fontFamily: 'Poppins',
-                fontSize: 13.5.sp,
-                fontWeight: FontWeight.w600,
-                color: _textDark,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Tap → validate inputs (same checks as Sign in) → show role picker.
-  // Picker selection invokes the existing AuthController.login(userType:).
+  // Hidden staff entry (long-press logo) → validate → role picker →
+  // existing AuthController.login(userType:).
   Future<void> _onTeamAdminTapped() async {
     await AnalyticsHelper.trackButtonClick(
       'team_admin_login',

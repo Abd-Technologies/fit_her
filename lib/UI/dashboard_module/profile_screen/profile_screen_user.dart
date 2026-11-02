@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
+import 'package:fitness_zone_2/UI/auth_module/privacy_health_notice_screen.dart';
 import 'package:fitness_zone_2/UI/auth_module/result_screen.dart' show openWhatsAppChat;
 import 'package:fitness_zone_2/UI/auth_module/sign_up_screen/goal_screen.dart';
 import 'package:fitness_zone_2/UI/auth_module/sign_up_screen/sign_up_screen_questions.dart';
@@ -1331,6 +1332,11 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
         // Same admin WhatsApp number used by result_screen.dart's contact
         // CTA — keep the number in one place until we add a config var.
         onTap: () => _showHelpSheet(context, textTheme),
+      ),
+      _MenuItem(
+        icon: Icons.privacy_tip_outlined,
+        label: 'Privacy & health data',
+        onTap: () => Get.to(() => const PrivacyHealthNoticeScreen()),
       ),
     ];
 

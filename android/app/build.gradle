@@ -55,6 +55,29 @@ android {
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
+        // Wave 0 — ship arm64 only in release AAB/APK. Play App Bundles
+        // deliver per-ABI splits; dropping x86_64 + keeping a single phone
+        // ABI cuts hundreds of MB of duplicated Zoom/native libs vs the
+        // old ~570 MB universal APK. armeabi-v7a kept for minSdk 26 devices
+        // that are still 32-bit.
+        ndk {
+            abiFilters "arm64-v8a", "armeabi-v7a"
+        }
+    }
+
+    // Prefer App Bundle distribution on Play (not a fat universal APK).
+    // Local: `flutter build appbundle --release`
+    bundle {
+        language {
+            // Keep en + ur; strip unused locale resources from deps.
+            enableSplit = true
+        }
+        density {
+            enableSplit = true
+        }
+        abi {
+            enableSplit = true
+        }
     }
 
     signingConfigs {

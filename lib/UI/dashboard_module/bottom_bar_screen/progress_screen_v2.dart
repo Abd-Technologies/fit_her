@@ -1452,21 +1452,32 @@ class _HydrationCard extends StatelessWidget {
             ),
           ),
         ],
+        // Wave 0 U-14 — meal logging is live elsewhere; do not show a
+        // bare "Meals · coming soon" placeholder next to real meal data.
+        // Only render when the API sends an explicit non-placeholder copy.
         if (data.mealsCard?.enabled == false) ...[
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              const Icon(Icons.restaurant_outlined,
-                  size: 14, color: _kTextMuted),
-              const SizedBox(width: 6),
-              Text(data.mealsCard?.copy ?? 'Meals · coming soon',
-                  style: const TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: 11,
-                      color: _kTextMuted,
-                      fontStyle: FontStyle.italic)),
-            ],
-          ),
+          Builder(builder: (_) {
+            final copy = (data.mealsCard?.copy ?? '').trim();
+            final isPlaceholder = copy.isEmpty ||
+                copy.toLowerCase().contains('coming soon');
+            if (isPlaceholder) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Row(
+                children: [
+                  const Icon(Icons.restaurant_outlined,
+                      size: 14, color: _kTextMuted),
+                  const SizedBox(width: 6),
+                  Text(copy,
+                      style: const TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 11,
+                          color: _kTextMuted,
+                          fontStyle: FontStyle.italic)),
+                ],
+              ),
+            );
+          }),
         ],
       ],
     );

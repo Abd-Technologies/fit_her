@@ -5,11 +5,48 @@ import '../../data/models/get_user_plan/get_user_plan.dart';
 import 'v2_buttons.dart';
 
 const Color _kHeroDark = Color(0xFF163220);
+const Color _kHeroMuted = Color(0xFF2A4A36);
 const Color _kCardBorder = Color(0xFFD8EDD4);
 const Color _kAccent = Color(0xFF6DC55A);
 const Color _kTextPrimary = Color(0xFF163220);
 const Color _kTextMuted = Color(0xFF6F8B7A);
 const Color _kSage = Color(0xFF9AB09A);
+
+/// Heuristic features from plan title/description so workout-only cards
+/// do not falsely list a customized diet plan (Wave 0 paywall fix).
+List<String> featuresForPlan(Plan plan) {
+  final blob =
+      '${plan.title} ${plan.shortDescription} ${plan.longDescription}'
+          .toLowerCase();
+  final isWorkoutOnly = (blob.contains('workout') || blob.contains('fitness')) &&
+      !blob.contains('diet') &&
+      !blob.contains('nutrition') &&
+      !blob.contains('meal');
+  final isDietOnly = (blob.contains('diet') || blob.contains('nutrition')) &&
+      !blob.contains('workout') &&
+      !blob.contains('fitness') &&
+      !blob.contains('class');
+
+  if (isWorkoutOnly) {
+    return const [
+      'Live workout sessions',
+      'Weekly follow-ups',
+      'Trainer-led classes',
+    ];
+  }
+  if (isDietOnly) {
+    return const [
+      'Customized diet plan',
+      'Weekly follow-ups',
+      'Dietitian support',
+    ];
+  }
+  return const [
+    'Live workout sessions',
+    'Customized diet plan',
+    'Weekly follow-ups',
+  ];
+}
 
 /// V2 price/plan card. Replaces the legacy `PlanWidget` /
 /// `OurPlansScreen` grid tile. Same `Plan` model, same currency +
@@ -19,6 +56,8 @@ class V2PriceCard extends StatelessWidget {
   final Plan plan;
   final VoidCallback onSubscribe;
   final List<String> features;
+  final bool isRecommended;
+  final bool isLighter;
 
   const V2PriceCard({
     super.key,
@@ -29,6 +68,8 @@ class V2PriceCard extends StatelessWidget {
       'Customized diet plan',
       'Weekly follow-ups',
     ],
+    this.isRecommended = false,
+    this.isLighter = false,
   });
 
   @override
@@ -47,7 +88,10 @@ class V2PriceCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: _kCardBorder, width: 1),
+        border: Border.all(
+          color: isRecommended ? _kAccent : _kCardBorder,
+          width: isRecommended ? 1.6 : 1,
+        ),
         boxShadow: [
           BoxShadow(
             color: _kHeroDark.withOpacity(0.05),
@@ -101,10 +145,11 @@ class V2PriceCard extends StatelessWidget {
   }
 
   Widget _heroHeader() {
+    final headerColor = isLighter ? _kHeroMuted : _kHeroDark;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-      color: _kHeroDark,
+      color: headerColor,
       child: Row(
         children: [
           Container(
@@ -119,7 +164,11 @@ class V2PriceCard extends StatelessWidget {
                 width: 1,
               ),
             ),
-            child: const Text('✨', style: TextStyle(fontSize: 18)),
+            child: Icon(
+              isLighter ? Icons.fitness_center : Icons.spa_outlined,
+              size: 18,
+              color: _kAccent,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -128,7 +177,7 @@ class V2PriceCard extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'PLAN',
+                  isRecommended ? 'MOST POPULAR' : 'PLAN',
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 9,
@@ -153,6 +202,23 @@ class V2PriceCard extends StatelessWidget {
               ],
             ),
           ),
+          if (isRecommended)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: _kAccent,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'Recommended',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -161,11 +227,18 @@ class V2PriceCard extends StatelessWidget {
   Widget _durationChips(List<DurationPlan> durations) {
     return Obx(() {
       final selectedId = plan.selectedDurationId.value;
+      final longest = durations.fold<DurationPlan?>(null, (best, d) {
+        final days = _parseDays(d.days);
+        final bestDays = _parseDays(best?.days);
+        if (best == null || days > bestDays) return d;
+        return best;
+      });
       return Wrap(
         spacing: 8,
         runSpacing: 8,
         children: durations.map((d) {
           final isSelected = d.id == selectedId;
+          final isBestValue = longest != null && d.id == longest.id;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () => plan.selectedDurationId.value = d.id ?? 0,
@@ -182,7 +255,9 @@ class V2PriceCard extends StatelessWidget {
                 ),
               ),
               child: Text(
-                d.days ?? '',
+                isBestValue && durations.length > 1
+                    ? '${d.days ?? ''} · Best value'
+                    : (d.days ?? ''),
                 style: TextStyle(
                   fontFamily: 'Poppins',
                   fontSize: 12,
@@ -196,6 +271,12 @@ class V2PriceCard extends StatelessWidget {
         }).toList(),
       );
     });
+  }
+
+  int _parseDays(String? raw) {
+    if (raw == null) return 0;
+    final match = RegExp(r'(\d+)').firstMatch(raw);
+    return int.tryParse(match?.group(1) ?? '') ?? 0;
   }
 
   Widget _priceRow(String currency, List<DurationPlan> durations) {

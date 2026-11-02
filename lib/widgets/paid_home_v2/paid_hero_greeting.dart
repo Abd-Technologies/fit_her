@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import '../../UI/auth_module/sign_up_screen/goal_screen.dart';
 import '../../data/controllers/paid_home_controller/paid_home_controller.dart';
 import '../../data/models/home_dashboard/home_dashboard_model.dart';
+import '../../utils/display_name.dart';
 import '../new_home/phase_theme.dart';
 
 /// H-01 greeting block: time-aware greeting + split-weight phase title
@@ -22,9 +23,10 @@ class PaidHeroGreeting extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name = (dashboard.user?.firstName ?? '').trim();
-    final resolvedName = name.isEmpty ? 'there' : name;
-    final greeting = '${_timeAwareGreeting()}, $resolvedName 🌿';
+    final resolvedName = friendlyDisplayName(
+      firstName: dashboard.user?.firstName,
+    );
+    final greeting = '${_timeAwareGreeting()}, $resolvedName';
 
     final phaseLabel =
         dashboard.cycle?.phaseLabel ?? theme.phaseLabel;

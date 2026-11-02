@@ -1,4 +1,6 @@
 import 'package:fitness_zone_2/UI/auth_module/login/login.dart';
+import 'package:fitness_zone_2/UI/auth_module/privacy_health_notice_screen.dart';
+import 'package:fitness_zone_2/UI/web_view.dart';
 import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -428,39 +430,86 @@ class _SignUpNewUserState extends State<SignUpNewUser> {
                             ),
                             SizedBox(height: 12.h),
 
-                            // ── Terms ──
-                            Center(
-                              child: RichText(
-                                textAlign: TextAlign.center,
-                                text: TextSpan(
+                            // ── Terms + privacy (Wave 0 — tappable) ──
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(
+                                  'By continuing, I agree to ',
                                   style: TextStyle(
                                     fontFamily: 'Poppins',
                                     fontSize: 11.sp,
                                     color: _textMuted,
                                     height: 1.6,
                                   ),
-                                  children: [
-                                    const TextSpan(
-                                        text:
-                                            'By continuing, I agree to '),
-                                    TextSpan(
-                                      text: 'Terms of Services',
-                                      style: TextStyle(
-                                        color: _green,
-                                        fontWeight: FontWeight.w500,
-                                      ),
+                                ),
+                                GestureDetector(
+                                  onTap: () => Get.to(
+                                    () => const WebViewScreen(
+                                      url: 'https://thefither.com/terms',
                                     ),
-                                    const TextSpan(
-                                        text: ' and acknowledge the '),
-                                    TextSpan(
-                                      text: 'Privacy Policy',
-                                      style: TextStyle(
-                                        color: _green,
-                                        fontWeight: FontWeight.w500,
-                                      ),
+                                  ),
+                                  child: Text(
+                                    'Terms of Services',
+                                    style: TextStyle(
+                                      fontFamily: 'Poppins',
+                                      fontSize: 11.sp,
+                                      color: _green,
+                                      fontWeight: FontWeight.w500,
+                                      height: 1.6,
                                     ),
-                                    const TextSpan(text: '.'),
-                                  ],
+                                  ),
+                                ),
+                                Text(
+                                  ' and acknowledge the ',
+                                  style: TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 11.sp,
+                                    color: _textMuted,
+                                    height: 1.6,
+                                  ),
+                                ),
+                                GestureDetector(
+                                  onTap: () => Get.to(
+                                      () => const PrivacyHealthNoticeScreen()),
+                                  child: Text(
+                                    'Privacy Policy',
+                                    style: TextStyle(
+                                      fontFamily: 'Poppins',
+                                      fontSize: 11.sp,
+                                      color: _green,
+                                      fontWeight: FontWeight.w500,
+                                      height: 1.6,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  '.',
+                                  style: TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 11.sp,
+                                    color: _textMuted,
+                                    height: 1.6,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: 10.h),
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => Get.to(
+                                  () => const PrivacyHealthNoticeScreen()),
+                              child: Text(
+                                'We store cycle, mood, sleep, meals and related '
+                                'health logs to personalise your plan. Tap to '
+                                'read what we store and how to request deletion.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 11.sp,
+                                  height: 1.45,
+                                  color: _textMuted,
                                 ),
                               ),
                             ),

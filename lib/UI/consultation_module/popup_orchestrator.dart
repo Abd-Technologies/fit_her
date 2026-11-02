@@ -302,15 +302,9 @@ class _PendingPopupOrchestratorState extends State<PendingPopupOrchestrator> {
         break;
 
       case 'POPUP_BOOK_INITIAL_REMINDER':
+        // Keep _showing true across reminder → booking so refreshDashboard
+        // cannot stack Day7/another popup on top (Wave 0 U-01).
         await BookInitialReminderSheet.show(
-          // "Book now" opens the real booking flow via booking-context
-          // + BookConsultationSheet (see _openBookingSheet above). It
-          // does NOT complete this popup itself — BookConsultationSheet
-          // completes POPUP_BOOK_INITIAL_CONSULTATION once a slot is
-          // actually booked, and the backend's evalBookInitialReminder
-          // independently retires this reminder once a real Appointment
-          // exists. So backing out of the booking sheet without booking
-          // correctly leaves the reminder eligible to resurface.
           onBookNow: () => _openBookingSheet(
             popupVariable: 'POPUP_BOOK_INITIAL_CONSULTATION',
             kind: 'initial',

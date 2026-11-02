@@ -11,14 +11,13 @@ import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.
 import 'package:fitness_zone_2/helper/permissions.dart';
 import 'package:fitness_zone_2/values/my_imgs.dart';
 import 'package:fitness_zone_2/widgets/app_bar_widget.dart';
-import 'package:fitness_zone_2/widgets/toasts.dart';
 
 /// Dedicated "upload payment slip" screen — the manual-payment branch of
-/// the new SelectPaymentMode picker. Pick image (camera/gallery) → upload
-/// → review-pending dialog. Lifts the slip-upload UI out of the old
-/// combined picker screen so each method has a clean surface.
-class UploadSlipScreen extends StatelessWidget {
-  UploadSlipScreen({
+/// the new SelectPaymentMode picker. Wave 0 (P-01): picker errors stay
+/// inside the card (never a toast while the picker is open), Submit shows
+/// a loading state, and success explains next steps.
+class UploadSlipScreen extends StatefulWidget {
+  const UploadSlipScreen({
     super.key,
     required this.planId,
     required this.durationId,
@@ -29,6 +28,11 @@ class UploadSlipScreen extends StatelessWidget {
   final String price;
   final int durationId;
 
+  @override
+  State<UploadSlipScreen> createState() => _UploadSlipScreenState();
+}
+
+class _UploadSlipScreenState extends State<UploadSlipScreen> {
   final HomeController homeController = Get.find();
 
   static const _kCanvas = Color(0xFFF9FCF7);
@@ -37,10 +41,25 @@ class UploadSlipScreen extends StatelessWidget {
   static const _kTextPrimary = Color(0xFF1A3A22);
   static const _kSage = Color(0xFF7A8C78);
   static const _kAccent = Color(0xFF6DC55A);
+  static const _kError = Color(0xFFB42318);
+  static const _kErrorBg = Color(0xFFFEECEC);
+
+  String? _inlineError;
+  bool _picking = false;
+  bool _uploading = false;
+  String _statusLine = 'Not uploaded yet';
+
+  @override
+  void dispose() {
+    // Clear any half-picked image when leaving so a later visit starts clean.
+    if (!_uploading) {
+      homeController.planPicture = null;
+    }
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
     return Scaffold(
       backgroundColor: _kCanvas,
       appBar: HelpingWidgets().appBarWidget(() {
@@ -75,20 +94,40 @@ class UploadSlipScreen extends StatelessWidget {
                   height: 1.5,
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Status: $_statusLine',
+                  style: const TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: _kTextPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               Expanded(
                 child: GetBuilder<HomeController>(builder: (cont) {
                   final picked = cont.planPicture;
                   return GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTap: () => _selectMediaBottomSheet(context),
+                    onTap: _picking || _uploading
+                        ? null
+                        : () => _selectMediaBottomSheet(context),
                     child: Container(
                       width: double.infinity,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: _kCardBorder, width: 1),
+                        border: Border.all(
+                          color: _inlineError != null
+                              ? _kError.withOpacity(0.55)
+                              : _kCardBorder,
+                          width: 1,
+                        ),
                         boxShadow: [
                           BoxShadow(
                             color: _kTextPrimary.withOpacity(0.06),
@@ -98,36 +137,59 @@ class UploadSlipScreen extends StatelessWidget {
                         ],
                       ),
                       child: picked != null
-                          ? ClipRRect(
-                              borderRadius: BorderRadius.circular(20),
-                              child: Image.file(
-                                File(picked.path),
-                                fit: BoxFit.cover,
-                                width: double.infinity,
-                                height: double.infinity,
-                              ),
+                          ? Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(20),
+                                  child: Image.file(
+                                    File(picked.path),
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                    height: double.infinity,
+                                  ),
+                                ),
+                                if (_picking)
+                                  Container(
+                                    color: Colors.black26,
+                                    alignment: Alignment.center,
+                                    child: const CircularProgressIndicator(
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                              ],
                             )
                           : Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Container(
-                                  width: 72,
-                                  height: 72,
-                                  alignment: Alignment.center,
-                                  decoration: BoxDecoration(
-                                    color: _kIconWashBg,
-                                    shape: BoxShape.circle,
+                                if (_picking)
+                                  const Padding(
+                                    padding: EdgeInsets.only(bottom: 16),
+                                    child: CircularProgressIndicator(
+                                      color: _kAccent,
+                                    ),
+                                  )
+                                else
+                                  Container(
+                                    width: 72,
+                                    height: 72,
+                                    alignment: Alignment.center,
+                                    decoration: const BoxDecoration(
+                                      color: _kIconWashBg,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: SizedBox(
+                                      width: 32,
+                                      height: 32,
+                                      child: SvgPicture.asset(MyImgs.upload),
+                                    ),
                                   ),
-                                  child: SizedBox(
-                                    width: 32,
-                                    height: 32,
-                                    child: SvgPicture.asset(MyImgs.upload),
-                                  ),
-                                ),
                                 const SizedBox(height: 16),
-                                const Text(
-                                  'Tap to upload slip',
-                                  style: TextStyle(
+                                Text(
+                                  _picking
+                                      ? 'Opening camera / gallery…'
+                                      : 'Tap to upload slip',
+                                  style: const TextStyle(
                                     fontFamily: 'Poppins',
                                     fontSize: 14,
                                     fontWeight: FontWeight.w700,
@@ -149,59 +211,75 @@ class UploadSlipScreen extends StatelessWidget {
                   );
                 }),
               ),
+              if (_inlineError != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _kErrorBg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: _kError.withOpacity(0.25)),
+                  ),
+                  child: Text(
+                    _inlineError!,
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: _kError,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: () async {
-                  if (homeController.planPicture == null) {
-                    CustomToast.failToast(msg: "Please select an image first");
-                    return;
-                  }
-                  final success = await homeController.addPlanBuyImage(
-                      planId, durationId, price);
-                  if (success) {
-                    HelpingWidgets.showCustomDialog(context, () {
-                      Get.back();
-                      Get.back(); // close upload screen
-                      Get.back(); // close payment-method picker
-                    },
-                        "Successfully Uploaded!",
-                        "Our team is reviewing your payment, and you will "
-                            "receive a confirmation shortly. Please wait "
-                            "for approval.",
-                        MyImgs.logo,
-                        buttonText: "OK");
-                  }
-                },
-                child: Container(
-                  height: 52,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: _kAccent,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: _kAccent.withOpacity(0.32),
-                        offset: const Offset(0, 6),
-                        blurRadius: 16,
-                      ),
-                    ],
-                  ),
-                  child: const Text(
-                    'Upload payment slip',
-                    style: TextStyle(
-                      fontFamily: 'Poppins',
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
+                onTap: _uploading || _picking ? null : _onSubmit,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 150),
+                  opacity: _uploading || _picking ? 0.7 : 1,
+                  child: Container(
+                    height: 52,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: _kAccent,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _kAccent.withOpacity(0.32),
+                          offset: const Offset(0, 6),
+                          blurRadius: 16,
+                        ),
+                      ],
                     ),
+                    child: _uploading
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.4,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text(
+                            'Upload payment slip',
+                            style: TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                            ),
+                          ),
                   ),
                 ),
               ),
               const SizedBox(height: 8),
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: () => Get.back(),
+                onTap: _uploading ? null : () => Get.back(),
                 child: Container(
                   height: 46,
                   alignment: Alignment.center,
@@ -221,6 +299,47 @@ class UploadSlipScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _onSubmit() async {
+    if (homeController.planPicture == null) {
+      setState(() {
+        _inlineError =
+            'Please choose a camera or gallery photo before uploading.';
+      });
+      return;
+    }
+    setState(() {
+      _inlineError = null;
+      _uploading = true;
+      _statusLine = 'Sending…';
+    });
+    final success = await homeController.addPlanBuyImage(
+      widget.planId,
+      widget.durationId,
+      widget.price,
+    );
+    if (!mounted) return;
+    setState(() => _uploading = false);
+    if (success) {
+      setState(() => _statusLine = 'Sent · Under review');
+      HelpingWidgets.showCustomDialog(context, () {
+        Get.back();
+        Get.back(); // close upload screen
+        Get.back(); // close payment-method picker
+      },
+          "Successfully Uploaded!",
+          "Our team is reviewing your payment. Status: Sent → Under review → "
+              "Active. You will get a confirmation when your plan turns on.",
+          MyImgs.logo,
+          buttonText: "OK");
+    } else {
+      setState(() {
+        _statusLine = 'Upload failed — try again';
+        _inlineError =
+            'We could not upload your slip. Check your connection and try again.';
+      });
+    }
   }
 
   void _selectMediaBottomSheet(BuildContext context) {
@@ -255,17 +374,19 @@ class UploadSlipScreen extends StatelessWidget {
                 _sourceTile(
                   icon: Icons.photo_camera_outlined,
                   label: 'Camera',
-                  onTap: () {
-                    Get.back();
-                    _getFromCamera(context);
+                  onTap: () async {
+                    await Get.back();
+                    if (!mounted) return;
+                    await _pickFrom(ImageSource.camera);
                   },
                 ),
                 _sourceTile(
                   icon: Icons.photo_library_outlined,
                   label: 'Gallery',
-                  onTap: () {
-                    Get.back();
-                    _getFromGallery(context);
+                  onTap: () async {
+                    await Get.back();
+                    if (!mounted) return;
+                    await _pickFrom(ImageSource.gallery);
                   },
                 ),
               ],
@@ -273,6 +394,8 @@ class UploadSlipScreen extends StatelessWidget {
           ],
         ),
       ),
+      isDismissible: !_picking,
+      enableDrag: !_picking,
     );
   }
 
@@ -311,46 +434,89 @@ class UploadSlipScreen extends StatelessWidget {
     );
   }
 
-  // Preserved verbatim from SelectPaymentMode — same compress + XFile
-  // assignment so HomeController.addPlanBuyImage gets the same shape it
-  // had before.
-  Future<void> _getFromCamera(BuildContext context) async {
-    final granted =
-        await PermissionOfPhotos().getFromCamera(context);
-    if (!granted) return;
-    final pickedFile =
-        await ImagePicker().pickImage(source: ImageSource.camera);
-    if (pickedFile == null) return;
-    final dir = Directory.systemTemp;
-    final targetPath =
-        "${dir.absolute.path}/dp${Get.find<AuthController>().i}.jpg";
-    final compressed = await FlutterImageCompress.compressAndGetFile(
-        pickedFile.path, targetPath,
-        quality: 60);
-    if (compressed == null) return;
-    homeController.planPicture = XFile(compressed.path);
-    homeController.update();
-    Get.find<AuthController>().i++;
-    Get.find<AuthController>().update();
-  }
+  Future<void> _pickFrom(ImageSource source) async {
+    if (_picking) return;
+    setState(() {
+      _picking = true;
+      _inlineError = null;
+    });
 
-  Future<void> _getFromGallery(BuildContext context) async {
-    final granted =
-        await PermissionOfPhotos().getFromGallery(context);
-    if (!granted) return;
-    final pickedFile =
-        await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (pickedFile == null) return;
-    final dir = Directory.systemTemp;
-    final targetPath =
-        "${dir.absolute.path}/dp${Get.find<AuthController>().i}.jpg";
-    final compressed = await FlutterImageCompress.compressAndGetFile(
-        pickedFile.path, targetPath,
-        quality: 60);
-    if (compressed == null) return;
-    homeController.planPicture = XFile(compressed.path);
-    homeController.update();
-    Get.find<AuthController>().i++;
-    Get.find<AuthController>().update();
+    try {
+      final granted = source == ImageSource.camera
+          ? await PermissionOfPhotos().getFromCamera(context)
+          : await PermissionOfPhotos().getFromGallery(context);
+      if (!granted) {
+        if (mounted) {
+          setState(() {
+            _picking = false;
+            _inlineError = source == ImageSource.camera
+                ? 'Camera permission is required to take a slip photo.'
+                : 'Gallery permission is required to pick a slip photo.';
+          });
+        }
+        return;
+      }
+
+      // Let the permission UI settle before opening the system picker so
+      // we never race a toast/error against the still-open camera UI.
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+      if (!mounted) return;
+
+      final pickedFile = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 85,
+      );
+      if (pickedFile == null) {
+        // User dismissed the picker with no image — show inline error only
+        // after the picker is gone (Wave 0 P-01).
+        if (mounted) {
+          setState(() {
+            _picking = false;
+            if (homeController.planPicture == null) {
+              _inlineError = 'No image selected. Tap the card to try again.';
+            }
+          });
+        }
+        return;
+      }
+
+      final dir = Directory.systemTemp;
+      final targetPath =
+          "${dir.absolute.path}/dp${Get.find<AuthController>().i}.jpg";
+      final compressed = await FlutterImageCompress.compressAndGetFile(
+        pickedFile.path,
+        targetPath,
+        quality: 60,
+      );
+      if (compressed == null) {
+        if (mounted) {
+          setState(() {
+            _picking = false;
+            _inlineError = 'Could not process that image. Please try another.';
+          });
+        }
+        return;
+      }
+
+      homeController.planPicture = XFile(compressed.path);
+      homeController.update();
+      Get.find<AuthController>().i++;
+      Get.find<AuthController>().update();
+
+      if (mounted) {
+        setState(() {
+          _picking = false;
+          _inlineError = null;
+          _statusLine = 'Photo ready · tap Upload';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _picking = false;
+          _inlineError = 'Something went wrong opening the picker. Try again.';
+        });
+      }
+    }
   }
 }
