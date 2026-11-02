@@ -11,7 +11,6 @@ import 'package:get/get.dart';
 
 import '../../data/models/get_user_plan/get_user_plan.dart';
 import '../../helper/analytics_helper.dart';
-import '../../data/analytics/analytics_events.dart';
 
 class OurPlansScreen extends StatelessWidget {
   OurPlansScreen({super.key});
@@ -24,7 +23,7 @@ class OurPlansScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    AnalyticsHelper.track(AnalyticsEvents.paywallView);
+    AnalyticsHelper.trackScreenView('OurPlans');
     return Scaffold(
       backgroundColor: _kCream,
       body: SafeArea(

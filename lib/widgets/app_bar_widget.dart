@@ -620,12 +620,13 @@ class HelpingWidgets {
 
         final isTrial = _isFreeTrialUser(homeController);
         final userTier = isTrial ? 'free_trial' : 'paid';
+        final trainerName = _slotTrainerName(slot);
 
         // Fire workout_join_clicked analytics
         await AnalyticsHelper.trackWorkoutJoinClicked(
           slotId: slot.id.toString(),
           className: slot.type,
-          trainerName: slot.trainerName,
+          trainerName: trainerName,
           userTier: userTier,
           linkType: link.contains('https') ? 'https_url' : 'zoom_native',
         );
@@ -637,7 +638,7 @@ class HelpingWidgets {
               await Get.find<MotivationController>().classPresenceJoin(
                 slotId: slot.id.toString(),
                 className: slot.type,
-                trainerName: slot.trainerName,
+                trainerName: trainerName,
                 scheduledStartTime: slot.start,
               );
             }
@@ -647,7 +648,7 @@ class HelpingWidgets {
               link,
               slot.id.toString(),
               className: slot.type,
-              trainerName: slot.trainerName,
+              trainerName: trainerName,
               scheduledStartTime: slot.start,
             );
           }
@@ -765,6 +766,13 @@ class HelpingWidgets {
         false;
     if (_hasActiveThreeDayTrial(homeController)) return true;
     return planFreeTrial;
+  }
+
+  static String? _slotTrainerName(Slot slot) {
+    final t = slot.trainer;
+    if (t == null) return null;
+    final joined = '${t.firstName} ${t.lastName}'.trim();
+    return joined.isEmpty ? null : joined;
   }
 
   static bool _hasActiveThreeDayTrial(HomeController homeController) {

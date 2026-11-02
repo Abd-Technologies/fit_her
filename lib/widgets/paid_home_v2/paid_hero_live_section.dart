@@ -619,7 +619,7 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
 
         await AnalyticsHelper.trackWorkoutJoinClicked(
           slotId: id.toString(),
-          className: l.type,
+          className: l.classType,
           trainerName: l.trainerName,
           userTier: 'paid',
           linkType: link.contains('https') ? 'https_url' : 'zoom_native',
@@ -630,7 +630,7 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
             if (Get.isRegistered<MotivationController>()) {
               await Get.find<MotivationController>().classPresenceJoin(
                 slotId: id.toString(),
-                className: l.type,
+                className: l.classType,
                 trainerName: l.trainerName,
                 scheduledStartTime: l.start,
               );
@@ -640,7 +640,7 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
             await HelpingWidgets.startMeeting(
               link,
               id.toString(),
-              className: l.type,
+              className: l.classType,
               trainerName: l.trainerName,
               scheduledStartTime: l.start,
             );

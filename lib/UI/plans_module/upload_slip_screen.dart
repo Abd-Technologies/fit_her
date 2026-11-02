@@ -375,7 +375,7 @@ class _UploadSlipScreenState extends State<UploadSlipScreen> {
                   icon: Icons.photo_camera_outlined,
                   label: 'Camera',
                   onTap: () async {
-                    await Get.back();
+                    Get.back();
                     if (!mounted) return;
                     await _pickFrom(ImageSource.camera);
                   },
@@ -384,7 +384,7 @@ class _UploadSlipScreenState extends State<UploadSlipScreen> {
                   icon: Icons.photo_library_outlined,
                   label: 'Gallery',
                   onTap: () async {
-                    await Get.back();
+                    Get.back();
                     if (!mounted) return;
                     await _pickFrom(ImageSource.gallery);
                   },

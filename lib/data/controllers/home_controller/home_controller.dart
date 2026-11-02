@@ -89,6 +89,15 @@ class HomeController extends GetxController implements GetxService {
   bool get hasActivePackage =>
       userHomeData != null && userHomeData!.userAllPlans.isNotEmpty && userHomeData!.userAllPlans.any((p) => p.remainingDays > 0);
 
+  /// Active 3-day trial or a plan titled "Free Trial". Used for analytics tiers.
+  bool get isFreeTrialUser {
+    if (trialLive.value) return true;
+    return userHomeData?.userAllPlans.any(
+          (plan) => plan.title.trim().toLowerCase() == 'free trial',
+        ) ??
+        false;
+  }
+
   ///Notifcation listern
 
   ///adding team member
