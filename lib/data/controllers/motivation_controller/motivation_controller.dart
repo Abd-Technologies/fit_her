@@ -113,7 +113,7 @@ class MotivationController extends GetxController implements GetxService {
 
     final homeController =
         Get.isRegistered<HomeController>() ? Get.find<HomeController>() : null;
-    final isTrial = homeController?.isFreeTrialUser.value ?? false;
+    final isTrial = homeController?.isFreeTrialUser ?? false;
     final userTier = isTrial ? 'free_trial' : 'paid';
 
     int? delayMinutes;
@@ -176,7 +176,7 @@ class MotivationController extends GetxController implements GetxService {
 
     final homeController =
         Get.isRegistered<HomeController>() ? Get.find<HomeController>() : null;
-    final isTrial = homeController?.isFreeTrialUser.value ?? false;
+    final isTrial = homeController?.isFreeTrialUser ?? false;
     final userTier = isTrial ? 'free_trial' : 'paid';
 
     // Fire Mixpanel event for class leave with duration

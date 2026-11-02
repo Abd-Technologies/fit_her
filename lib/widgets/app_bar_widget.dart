@@ -620,12 +620,15 @@ class HelpingWidgets {
 
         final isTrial = _isFreeTrialUser(homeController);
         final userTier = isTrial ? 'free_trial' : 'paid';
+        final trainerName =
+            '${slot.trainer?.firstName ?? ''} ${slot.trainer?.lastName ?? ''}'
+                .trim();
 
         // Fire workout_join_clicked analytics
         await AnalyticsHelper.trackWorkoutJoinClicked(
           slotId: slot.id.toString(),
           className: slot.type,
-          trainerName: slot.trainerName,
+          trainerName: trainerName.isEmpty ? null : trainerName,
           userTier: userTier,
           linkType: link.contains('https') ? 'https_url' : 'zoom_native',
         );
@@ -637,7 +640,7 @@ class HelpingWidgets {
               await Get.find<MotivationController>().classPresenceJoin(
                 slotId: slot.id.toString(),
                 className: slot.type,
-                trainerName: slot.trainerName,
+                trainerName: trainerName.isEmpty ? null : trainerName,
                 scheduledStartTime: slot.start,
               );
             }
@@ -647,7 +650,7 @@ class HelpingWidgets {
               link,
               slot.id.toString(),
               className: slot.type,
-              trainerName: slot.trainerName,
+              trainerName: trainerName.isEmpty ? null : trainerName,
               scheduledStartTime: slot.start,
             );
           }

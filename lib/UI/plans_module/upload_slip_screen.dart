@@ -374,19 +374,17 @@ class _UploadSlipScreenState extends State<UploadSlipScreen> {
                 _sourceTile(
                   icon: Icons.photo_camera_outlined,
                   label: 'Camera',
-                  onTap: () async {
-                    await Get.back();
-                    if (!mounted) return;
-                    await _pickFrom(ImageSource.camera);
+                  onTap: () {
+                    Get.back();
+                    _pickFrom(ImageSource.camera);
                   },
                 ),
                 _sourceTile(
                   icon: Icons.photo_library_outlined,
                   label: 'Gallery',
-                  onTap: () async {
-                    await Get.back();
-                    if (!mounted) return;
-                    await _pickFrom(ImageSource.gallery);
+                  onTap: () {
+                    Get.back();
+                    _pickFrom(ImageSource.gallery);
                   },
                 ),
               ],
@@ -442,9 +440,13 @@ class _UploadSlipScreenState extends State<UploadSlipScreen> {
     });
 
     try {
-      final granted = source == ImageSource.camera
-          ? await PermissionOfPhotos().getFromCamera(context)
-          : await PermissionOfPhotos().getFromGallery(context);
+      if (!mounted) return;
+      final bool granted;
+      if (source == ImageSource.camera) {
+        granted = await PermissionOfPhotos().getFromCamera(context);
+      } else {
+        granted = await PermissionOfPhotos().getFromGallery(context);
+      }
       if (!granted) {
         if (mounted) {
           setState(() {
