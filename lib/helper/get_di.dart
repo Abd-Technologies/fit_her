@@ -30,13 +30,39 @@ import 'package:fitness_zone_2/data/services/timezone_sync_service.dart';
 import 'package:fitness_zone_2/data/repos/daily_log_repo/daily_log_repository.dart';
 import 'package:fitness_zone_2/data/controllers/daily_log_controller/daily_log_controller.dart';
 import 'package:fitness_zone_2/data/services/tier_access_service.dart';
+import 'package:fitness_zone_2/data/services/remote_config_service.dart';
+import 'package:fitness_zone_2/data/services/food_preferences_service.dart';
+import 'package:fitness_zone_2/data/services/extended_log_service.dart';
 import 'package:fitness_zone_2/data/services/food_db_service.dart';
 import 'package:fitness_zone_2/data/services/food_diary_service.dart';
 import 'package:fitness_zone_2/data/services/luna_insight_service.dart';
 import 'package:fitness_zone_2/data/services/behavior_signal_service.dart';
 import 'package:fitness_zone_2/data/services/community_moderation_service.dart';
 import 'package:fitness_zone_2/data/services/smart_reminder_service.dart';
+import 'package:fitness_zone_2/data/services/weekly_diet_adjust_service.dart';
+import 'package:fitness_zone_2/data/services/grocery_list_service.dart';
+import 'package:fitness_zone_2/data/services/period_predictor_service.dart';
+import 'package:fitness_zone_2/data/services/reports_d23_service.dart';
+import 'package:fitness_zone_2/data/services/ai_cost_monitor_service.dart';
+import 'package:fitness_zone_2/data/services/referral_service.dart';
+import 'package:fitness_zone_2/data/services/tone_personalization_service.dart';
+import 'package:fitness_zone_2/data/services/daily_note_service.dart';
+import 'package:fitness_zone_2/data/services/nutritionist_chat_service.dart';
+import 'package:fitness_zone_2/data/services/ramadan_mode_service.dart';
+import 'package:fitness_zone_2/data/services/red_flag_service.dart';
+import 'package:fitness_zone_2/data/services/lab_report_service.dart';
+import 'package:fitness_zone_2/data/services/privacy_lock_service.dart';
+import 'package:fitness_zone_2/data/services/health_sync_stub_service.dart';
+import 'package:fitness_zone_2/data/services/points_service.dart';
+import 'package:fitness_zone_2/data/services/community_streak_service.dart';
+import 'package:fitness_zone_2/data/services/content_poster_service.dart';
+import 'package:fitness_zone_2/data/services/gift_group_plans_service.dart';
+import 'package:fitness_zone_2/data/services/locale_pref_service.dart';
+import 'package:fitness_zone_2/data/services/progress_photo_service.dart';
 import 'package:fitness_zone_2/guided_workout/guided_workout_controller.dart';
+import 'package:fitness_zone_2/guided_workout/adaptive_workout_service.dart';
+import 'package:fitness_zone_2/recorded_library/recorded_library_controller.dart';
+import 'package:fitness_zone_2/conditions/condition_module_engine.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -72,7 +98,10 @@ Future init() async {
   Get.lazyPut(() => AnalyticsService());
   Get.lazyPut(() => OfflineSyncQueue(prefs: sharedPreferences));
   Get.lazyPut(() => FoodDbService());
+  Get.lazyPut(() => RemoteConfigService(prefs: sharedPreferences));
   Get.lazyPut(() => TierAccessService(prefs: sharedPreferences));
+  Get.lazyPut(() => FoodPreferencesService(prefs: sharedPreferences));
+  Get.lazyPut(() => ExtendedLogService(prefs: sharedPreferences));
   Get.lazyPut(() => BehaviorSignalService(prefs: sharedPreferences));
   Get.lazyPut(() => LunaInsightService(prefs: sharedPreferences));
   Get.lazyPut(
@@ -97,6 +126,29 @@ Future init() async {
       plugin: FlutterLocalNotificationsPlugin(),
     ),
   );
+  // Delivery 2–3 services
+  Get.lazyPut(() => WeeklyDietAdjustService(prefs: sharedPreferences));
+  Get.lazyPut(() => GroceryListService(prefs: sharedPreferences));
+  Get.lazyPut(() => PeriodPredictorService());
+  Get.lazyPut(() => ReportsD23Service());
+  Get.lazyPut(() => AiCostMonitorService(prefs: sharedPreferences));
+  Get.lazyPut(() => ReferralService(prefs: sharedPreferences));
+  Get.lazyPut(() => TonePersonalizationService(prefs: sharedPreferences));
+  Get.lazyPut(() => DailyNoteService(prefs: sharedPreferences));
+  Get.lazyPut(() => NutritionistChatService());
+  Get.lazyPut(() => RamadanModeService(prefs: sharedPreferences));
+  Get.lazyPut(() => RedFlagService());
+  Get.lazyPut(() => LabReportService(prefs: sharedPreferences));
+  Get.lazyPut(() => PrivacyLockService(prefs: sharedPreferences));
+  Get.lazyPut(() => HealthSyncStubService(prefs: sharedPreferences));
+  Get.lazyPut(() => PointsService(prefs: sharedPreferences));
+  Get.lazyPut(() => CommunityStreakService(prefs: sharedPreferences));
+  Get.lazyPut(() => ContentPosterService(prefs: sharedPreferences));
+  Get.lazyPut(() => GiftGroupPlansService());
+  Get.lazyPut(() => LocalePrefService(prefs: sharedPreferences));
+  Get.lazyPut(() => ProgressPhotoService(prefs: sharedPreferences));
+  Get.lazyPut(() => AdaptiveWorkoutService(prefs: sharedPreferences));
+  Get.lazyPut(() => ConditionModuleEngine(prefs: sharedPreferences));
 
   // fenix: true on every controller below — survives any GetX scope
   // teardown (logout flow, hot-restart in dev, idle eviction on low-mem
@@ -222,6 +274,10 @@ Future init() async {
   );
   Get.lazyPut(
     () => GuidedWorkoutController(prefs: sharedPreferences),
+    fenix: true,
+  );
+  Get.lazyPut(
+    () => RecordedLibraryController(prefs: sharedPreferences),
     fenix: true,
   );
   Get.lazyPut(() => ZoomMeetingGetxController(), fenix: true);

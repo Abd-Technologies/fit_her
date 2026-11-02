@@ -127,7 +127,7 @@ class _ProgressBetaToggleState extends State<ProgressBetaToggle> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Try the new Progress (Beta)',
+                  'Progress hub (reports live)',
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF000000)),
                 ),
                 const SizedBox(height: 2),

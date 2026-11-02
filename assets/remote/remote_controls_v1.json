@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "featureFlags": {
+    "weeklyDietAdjust": true,
+    "groceryList": true,
+    "aiNutritionist": true,
+    "recordedLibrary": true,
+    "ramadanMode": true,
+    "cycleCalendar": true,
+    "redFlagGuidance": true,
+    "labUpload": true,
+    "privacyLock": true,
+    "referralProgram": true,
+    "pointsForStreaks": true,
+    "conditionModules": true
+  },
+  "mealPhotoCapFree": 30,
+  "nutritionistDailyCap": 10,
+  "nutritionistMonthlyCap": 100,
+  "pdfGate": "plus",
+  "monthlyReportGate": "plus",
+  "doctorPdfGate": "plus",
+  "aiCostAlertThreshold": 50,
+  "tierEntitlements": {
+    "free": {
+      "guidedWorkouts": false,
+      "mealPhotoUnlimited": false,
+      "libraryAccess": "none",
+      "nutritionist": false,
+      "reports": false
+    },
+    "active": {
+      "guidedWorkouts": true,
+      "mealPhotoUnlimited": false,
+      "libraryAccess": "subset",
+      "nutritionist": false,
+      "reports": false
+    },
+    "plus": {
+      "guidedWorkouts": true,
+      "mealPhotoUnlimited": true,
+      "libraryAccess": "subset",
+      "nutritionist": false,
+      "reports": true
+    },
+    "unlimited": {
+      "guidedWorkouts": true,
+      "mealPhotoUnlimited": true,
+      "libraryAccess": "full",
+      "nutritionist": true,
+      "reports": true
+    }
+  },
+  "libraryActiveClassIds": ["rc_sample_1", "rc_sample_2", "rc_micro_cramps"]
+}

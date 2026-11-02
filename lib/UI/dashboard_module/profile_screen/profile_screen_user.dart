@@ -12,6 +12,7 @@ import 'package:fitness_zone_2/data/controllers/motivation_controller/motivation
 import 'package:fitness_zone_2/UI/dashboard_module/profile_screen/notification_settings_screen.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/profile_screen/personal_details_screen.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/profile_screen/my_reports_screen.dart';
+import 'package:fitness_zone_2/UI/delivery23/delivery23_hub_screen.dart';
 import 'package:fitness_zone_2/UI/support/report_issue_screen.dart';
 import 'package:fitness_zone_2/UI/plans_module/all_plans.dart';
 import 'package:fitness_zone_2/data/Repos/cycle_repo/cycle_data_repository.dart';
@@ -1316,6 +1317,11 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
         icon: Icons.description_outlined,
         label: 'My reports',
         onTap: () => Get.to(() => const MyReportsScreen()),
+      ),
+      _MenuItem(
+        icon: Icons.auto_awesome_outlined,
+        label: 'Personalization & library',
+        onTap: () => Get.to(() => const Delivery23HubScreen()),
       ),
       _MenuItem(
         icon: Icons.report_problem_outlined,

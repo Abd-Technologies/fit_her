@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "modules": [
+    {
+      "id": "pcos",
+      "title": "PCOS",
+      "enabledByDefault": false,
+      "tracking": ["cravings", "skin_hair", "cycle_range"],
+      "nutritionRules": ["low_gi", "steady_protein"],
+      "workoutModifiers": ["strength_plus_moderate_cardio", "fewer_phase_nudges"],
+      "notificationCapPerDay": 2,
+      "doctorReportSection": "PCOS notes: cycle range, skin/hair, meds, cravings.",
+      "safetyPrompt": "pending_doctor_review: PCOS guidance is supportive only — see a clinician for diagnosis.",
+      "communitySpace": "pcos_circle"
+    },
+    {
+      "id": "postpartum",
+      "title": "Postpartum",
+      "enabledByDefault": false,
+      "tracking": ["feeding_type", "recovery_symptoms", "weeks_since_delivery"],
+      "nutritionRules": ["no_calorie_deficit", "recovery_protein"],
+      "workoutModifiers": ["staged_5_to_15", "stricter_c_section_stages"],
+      "notificationCapPerDay": 1,
+      "doctorReportSection": "Postpartum recovery summary.",
+      "safetyPrompt": "pending_doctor_review: Get clearance before returning to impact work.",
+      "communitySpace": "postpartum_circle",
+      "disableCyclePredictionUntilReturn": true
+    },
+    {
+      "id": "thyroid",
+      "title": "Thyroid",
+      "enabledByDefault": false,
+      "tracking": ["thyroid_type", "med_timing", "optional_labs"],
+      "nutritionRules": ["iodine_selenium_food_focus"],
+      "workoutModifiers": ["energy_led"],
+      "notificationCapPerDay": 2,
+      "doctorReportSection": "Thyroid: meds logged, lab trends if uploaded. Never dose advice.",
+      "safetyPrompt": "pending_doctor_review: The app never advises on medication dose.",
+      "communitySpace": "thyroid_space"
+    },
+    {
+      "id": "endometriosis",
+      "title": "Endometriosis",
+      "enabledByDefault": false,
+      "tracking": ["pain_diary", "flare_forecast"],
+      "nutritionRules": ["anti_inflammatory"],
+      "workoutModifiers": ["low_impact_on_high_pain"],
+      "notificationCapPerDay": 2,
+      "doctorReportSection": "Pain diary for clinician review.",
+      "safetyPrompt": "pending_doctor_review: Severe pain warrants medical care.",
+      "communitySpace": "endo_space"
+    },
+    {
+      "id": "pms_pmdd",
+      "title": "PMS / PMDD",
+      "enabledByDefault": false,
+      "tracking": ["pre_period_symptom_rating"],
+      "nutritionRules": ["steady_blood_sugar", "magnesium_rich"],
+      "workoutModifiers": ["gentle_pre_period"],
+      "notificationCapPerDay": 2,
+      "doctorReportSection": "PMS pattern across cycles.",
+      "safetyPrompt": "pending_doctor_review: Seek help for severe mood symptoms or thoughts of self-harm.",
+      "communitySpace": "pms_space"
+    },
+    {
+      "id": "perimenopause",
+      "title": "Perimenopause",
+      "enabledByDefault": false,
+      "tracking": ["hot_flushes", "night_sweats", "brain_fog", "cycle_length_change"],
+      "nutritionRules": ["calcium_vitd_protein"],
+      "workoutModifiers": ["strength_weight_bearing"],
+      "notificationCapPerDay": 2,
+      "doctorReportSection": "Perimenopause symptom trends.",
+      "safetyPrompt": "pending_doctor_review: Very heavy bleeding — consider seeing a doctor.",
+      "communitySpace": "peri_space"
+    },
+    {
+      "id": "ttc",
+      "title": "Trying to conceive",
+      "enabledByDefault": false,
+      "tracking": ["fertile_window", "bbt", "cervical_mucus", "opk", "intercourse_log"],
+      "nutritionRules": ["folate_iron_protein"],
+      "workoutModifiers": ["moderate_activity"],
+      "notificationCapPerDay": 2,
+      "doctorReportSection": "TTC log summary.",
+      "safetyPrompt": "pending_doctor_review: After the usual time of trying, consider clinical advice.",
+      "communitySpace": "ttc_space"
+    }
+  ]
+}
