@@ -1,0 +1,87 @@
+{
+  "classes": [
+    {
+      "id": "rc_sample_1",
+      "title": "Gentle strength 20",
+      "trainer": "Ayesha",
+      "trainerStyle": "calm",
+      "durationMin": 20,
+      "level": "beginner",
+      "focus": "full_body",
+      "phase": "follicular",
+      "equipment": ["mat"],
+      "streamUrl": "https://example.com/vod/gentle20.mp4",
+      "tags": ["strength"],
+      "micro": false,
+      "unlimitedOnly": false
+    },
+    {
+      "id": "rc_sample_2",
+      "title": "Power walk intervals",
+      "trainer": "Sara",
+      "trainerStyle": "high_energy",
+      "durationMin": 25,
+      "level": "intermediate",
+      "focus": "cardio",
+      "phase": "ovulatory",
+      "equipment": ["none"],
+      "streamUrl": "https://example.com/vod/walk25.mp4",
+      "tags": ["cardio"],
+      "micro": false,
+      "unlimitedOnly": false
+    },
+    {
+      "id": "rc_sample_3",
+      "title": "Strict core finishers",
+      "trainer": "Hina",
+      "trainerStyle": "strict",
+      "durationMin": 15,
+      "level": "advanced",
+      "focus": "core",
+      "phase": "luteal",
+      "equipment": ["mat"],
+      "streamUrl": "https://example.com/vod/core15.mp4",
+      "tags": ["core"],
+      "micro": false,
+      "unlimitedOnly": true
+    },
+    {
+      "id": "rc_micro_cramps",
+      "title": "Cramp relief 5",
+      "trainer": "Ayesha",
+      "trainerStyle": "calm",
+      "durationMin": 5,
+      "level": "beginner",
+      "focus": "recovery",
+      "phase": "menstrual",
+      "equipment": ["mat"],
+      "streamUrl": "https://example.com/vod/cramp5.mp4",
+      "tags": ["micro", "cramps"],
+      "micro": true,
+      "unlimitedOnly": false
+    },
+    {
+      "id": "rc_micro_stress",
+      "title": "Stress breath 5",
+      "trainer": "Sara",
+      "trainerStyle": "calm",
+      "durationMin": 5,
+      "level": "beginner",
+      "focus": "recovery",
+      "phase": "any",
+      "equipment": ["none"],
+      "streamUrl": "https://example.com/vod/breath5.mp4",
+      "tags": ["micro", "stress"],
+      "micro": true,
+      "unlimitedOnly": false
+    }
+  ],
+  "programs": [
+    {
+      "id": "prog_luteal_4w",
+      "title": "Gentle strength · luteal 4 weeks",
+      "weeks": 4,
+      "classIds": ["rc_sample_1", "rc_sample_2", "rc_sample_1", "rc_micro_stress"]
+    }
+  ]
+}

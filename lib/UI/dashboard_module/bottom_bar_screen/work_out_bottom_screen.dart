@@ -108,7 +108,7 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
     _weekStart = _mondayOfWeek(_selectedDate);
 
     // Track schedule view
-    final isTrial = homeController.isFreeTrialUser.value;
+    final isTrial = homeController.isFreeTrialUser;
     AnalyticsHelper.trackWorkoutScheduleViewed(
       planId: widget.planId,
       userTier: isTrial ? 'free_trial' : 'paid',

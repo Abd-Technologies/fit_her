@@ -36,7 +36,12 @@ import 'package:fitness_zone_2/data/services/luna_insight_service.dart';
 import 'package:fitness_zone_2/data/services/behavior_signal_service.dart';
 import 'package:fitness_zone_2/data/services/community_moderation_service.dart';
 import 'package:fitness_zone_2/data/services/smart_reminder_service.dart';
+import 'package:fitness_zone_2/data/services/food_preferences_service.dart';
+import 'package:fitness_zone_2/data/services/remote_config_service.dart';
+import 'package:fitness_zone_2/data/services/tone_personalization_service.dart';
+import 'package:fitness_zone_2/guided_workout/adaptive_workout_service.dart';
 import 'package:fitness_zone_2/guided_workout/guided_workout_controller.dart';
+import 'package:fitness_zone_2/recorded_library/recorded_library_controller.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -72,9 +77,12 @@ Future init() async {
   Get.lazyPut(() => AnalyticsService());
   Get.lazyPut(() => OfflineSyncQueue(prefs: sharedPreferences));
   Get.lazyPut(() => FoodDbService());
+  Get.lazyPut(() => RemoteConfigService(prefs: sharedPreferences));
   Get.lazyPut(() => TierAccessService(prefs: sharedPreferences));
+  Get.lazyPut(() => FoodPreferencesService(prefs: sharedPreferences));
   Get.lazyPut(() => BehaviorSignalService(prefs: sharedPreferences));
   Get.lazyPut(() => LunaInsightService(prefs: sharedPreferences));
+  Get.lazyPut(() => TonePersonalizationService(prefs: sharedPreferences));
   Get.lazyPut(
       () => CommunityModerationService(prefs: sharedPreferences));
   Get.lazyPut(
@@ -222,6 +230,14 @@ Future init() async {
   );
   Get.lazyPut(
     () => GuidedWorkoutController(prefs: sharedPreferences),
+    fenix: true,
+  );
+  Get.lazyPut(
+    () => AdaptiveWorkoutService(prefs: sharedPreferences),
+    fenix: true,
+  );
+  Get.lazyPut(
+    () => RecordedLibraryController(prefs: sharedPreferences),
     fenix: true,
   );
   Get.lazyPut(() => ZoomMeetingGetxController(), fenix: true);

@@ -134,6 +134,7 @@ flutter:
     - assets/
     - assets/food/
     - assets/guided_workout/
+    - assets/recorded_library/
     - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see
