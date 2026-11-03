@@ -14,9 +14,14 @@ concurrency:
   group: ios-release
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 env:
   BUNDLE_ID: com.abtechnologies.fitHer
   TEAM_ID: 9BDW3F8A65
+  # Name of the manual App Store profile you made at developer.apple.com.
+  PROFILE_NAME: FitHer AppStore CI
 
 jobs:
   ios:
@@ -30,6 +35,14 @@ jobs:
           flutter-version: "3.35.6"
           channel: stable
           cache: true
+
+      - name: Zoom SDK (kept out of git, too big)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download zoom-sdk --pattern ios-zoom-sdk.zip --dir /tmp
+          unzip -q -o /tmp/ios-zoom-sdk.zip -d ios/Runner
+          ls -d ios/Runner/*.xcframework ios/Runner/*.bundle
 
       - name: Distribution certificate
         uses: apple-actions/import-codesign-certs@v3
@@ -48,9 +61,14 @@ jobs:
 
       - name: Use manual signing for this build
         run: |
-          PROFILE=$(ls -t ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)
-          NAME=$(security cms -D -i "$PROFILE" | plutil -extract Name raw -)
-          echo "Profile: $NAME"
+          NAME=""
+          for f in ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision; do
+            n=$(security cms -D -i "$f" | plutil -extract Name raw -)
+            echo "Found profile: $n"
+            if [ "$n" = "$PROFILE_NAME" ]; then NAME="$n"; fi
+          done
+          if [ -z "$NAME" ]; then echo "::error::No App Store profile named '$PROFILE_NAME'. Create it at developer.apple.com > Profiles (see docs/CI_SETUP.md)."; exit 1; fi
+          echo "Using profile: $NAME"
           PBX=ios/Runner.xcodeproj/project.pbxproj
           sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' "$PBX"
           sed -i '' "s/PROVISIONING_PROFILE_SPECIFIER = \"\";/PROVISIONING_PROFILE_SPECIFIER = \"$NAME\"; CODE_SIGN_IDENTITY = \"Apple Distribution\";/g" "$PBX"

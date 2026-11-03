@@ -15,6 +15,9 @@ on:
         description: "Build number (versionCode). Empty = the +N in pubspec.yaml"
         required: false
 
+permissions:
+  contents: read
+
 concurrency:
   group: android-release
   cancel-in-progress: false
@@ -36,6 +39,13 @@ jobs:
           flutter-version: "3.35.6"
           channel: stable
           cache: true
+
+      - name: Zoom SDK (kept out of git, too big)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download zoom-sdk --pattern mobilertc.aar --dir android/app/libs --clobber
+          ls -la android/app/libs
 
       - name: Signing key
         env:
