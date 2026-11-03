@@ -41,7 +41,7 @@ ios/Podfile.lock
 app.*.symbols
 .idea
 build
-pubspec.lock
+# pubspec.lock is committed (Nov 2026) so CI builds use the same package versions as your laptop.
 
 # Obfuscation related
 app.*.map.json
