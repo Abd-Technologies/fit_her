@@ -8,6 +8,7 @@ import '../../UI/free_trail/trial_journey_screen.dart';
 import '../../UI/free_trail/trial_summary_screen.dart';
 import '../../UI/plans_module/all_plans.dart';
 import '../../data/controllers/home_controller/home_controller.dart';
+import 'trial_recap_card.dart';
 
 const Color _kHeroDark = Color(0xFF163220);
 const Color _kHero2 = Color(0xFF24502F);
@@ -63,16 +64,24 @@ class _V2TrialBannerState extends State<V2TrialBanner> with WidgetsBindingObserv
       final total = home.trialDays.value;
       final endsAt = started.add(home.kTrialLength);
       final now = DateTime.now();
-      final day = (now.difference(started).inHours ~/ 24 + 1).clamp(1, total);
-      final lastDay = endsAt.difference(now).inHours < 24;
-      final endTime = DateFormat('h:mm a').format(endsAt);
+      // Calendar days, like her starter meal plan ("Day 3 of 3, Mon") and
+      // the server's trial recap, so the day number never disagrees
+      // between screens (Oct 2026).
+      final startDay = DateTime(started.year, started.month, started.day);
+      final today = DateTime(now.year, now.month, now.day);
+      final day = (today.difference(startDay).inDays + 1).clamp(1, total);
+      final lastDay = day >= total || endsAt.difference(now).inHours < 24;
+      final endsToday = endsAt.year == now.year && endsAt.month == now.month && endsAt.day == now.day;
+      final endTime = endsToday
+          ? 'today at ${DateFormat('h:mm a').format(endsAt)}'
+          : 'on ${DateFormat('EEE').format(endsAt)} at ${DateFormat('h:mm a').format(endsAt)}';
       final goal = home.classGoal.value;
       final attended = home.classesAttended.value;
       final goalDone = attended >= goal;
       home.trialClassData.value; // rebuild when classes load
       final next = home.nextTrialClass();
 
-      return Padding(
+      final Widget banner = Padding(
         padding: EdgeInsets.fromLTRB(16.w, 10.h, 16.w, 0),
         child: GestureDetector(
           onTap: () => Get.to(() => const TrialJourneyScreen()),
@@ -149,7 +158,7 @@ class _V2TrialBannerState extends State<V2TrialBanner> with WidgetsBindingObserv
                 if (lastDay) ...[
                   SizedBox(height: 10.h),
                   Text(
-                    'Your trial ends today at $endTime. Tap Upgrade to see your trial summary and your special offer.',
+                    'Your trial ends $endTime. Tap Upgrade to see your trial summary and your special offer.',
                     style: TextStyle(
                       fontFamily: 'Poppins',
                       fontSize: 12.sp,
@@ -202,7 +211,9 @@ class _V2TrialBannerState extends State<V2TrialBanner> with WidgetsBindingObserv
                           children: [
                             Expanded(
                               child: Text(
-                                'Next: ${next.label} · ${next.data['type'] ?? 'Live class'}',
+                                next.label == 'Live now'
+                                    ? 'Live now · ${next.data['type'] ?? 'Live class'}'
+                                    : 'Next: ${next.label} · ${next.data['type'] ?? 'Live class'}',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -235,6 +246,11 @@ class _V2TrialBannerState extends State<V2TrialBanner> with WidgetsBindingObserv
           ),
         ),
       );
+      // Last trial day: what she did each day + Keep going (this banner
+      // stays as the fallback if the recap can't load).
+      return lastDay
+          ? TrialRecapCard(key: ValueKey('recap_$day'), fallback: banner)
+          : banner;
     });
   }
 }

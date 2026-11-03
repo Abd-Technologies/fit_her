@@ -6,9 +6,12 @@ import '../../data/controllers/consultation_controller/consultation_controller.d
 import '../../data/controllers/diet_plan_user_controller/diet_plan_user_controller.dart';
 import '../../data/controllers/paid_home_controller/paid_home_controller.dart';
 import '../../data/models/consultation/pending_popup.dart';
+import '../../helper/popup_manager.dart';
 import '../plans_module/all_plans.dart';
 import 'booking/book_consultation_sheet.dart';
 import 'popups/book_initial_reminder_sheet.dart';
+import 'popups/class_cancelled_sheet.dart';
+import 'popups/consultation_cancelled_sheet.dart';
 import 'popups/daily_log_reminder_sheet.dart';
 import 'popups/day7_review_sheet.dart';
 import 'popups/early_checkin_sheet.dart';
@@ -58,9 +61,24 @@ class PendingPopupOrchestrator extends StatefulWidget {
       _PendingPopupOrchestratorState();
 }
 
+/// Push tap ("popupReminder"): open that pop-up. Waits up to 15 s for
+/// the paid Home to be on screen (cold start).
+Future<void> openPendingPopupFromPush(String variable) async {
+  if (variable.isEmpty) return;
+  for (var i = 0;
+      i < 30 && _PendingPopupOrchestratorState._active == null;
+      i++) {
+    await Future.delayed(const Duration(milliseconds: 500));
+  }
+  await _PendingPopupOrchestratorState._active?._openFromPush(variable);
+}
+
 class _PendingPopupOrchestratorState extends State<PendingPopupOrchestrator> {
   Worker? _worker;
   bool _showing = false;
+
+  // The Home that is on screen, for pushes that open a pop-up.
+  static _PendingPopupOrchestratorState? _active;
 
   // Persisted-across-sessions cooldown so a popup that fired once doesn't
   // refire every time the user lands on Home. Server still owns long-term
@@ -96,6 +114,11 @@ class _PendingPopupOrchestratorState extends State<PendingPopupOrchestrator> {
     'POPUP_INACTIVITY_REMINDER': Duration(days: 3),
     'POPUP_RENEW_PLAN': Duration(days: 7),
     'POPUP_DAILY_LOG_REMINDER': Duration(hours: 20),
+    // Health form: shows on the first open, then at most every 3 days.
+    // The "Finish your profile" card on home covers the days between.
+    'POPUP_PRE_CONSULTATION_FORM': Duration(days: 3),
+    // Urgent "consultation cancelled": once. The server retires it after 48 h.
+    'POPUP_CONSULTATION_CANCELLED': Duration(days: 2),
   };
 
   // In-memory cache mirroring SharedPreferences. Key = variable[+cycle],
@@ -143,6 +166,7 @@ class _PendingPopupOrchestratorState extends State<PendingPopupOrchestrator> {
   @override
   void initState() {
     super.initState();
+    _active = this;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _loadShown();
       final paid = Get.find<PaidHomeController>();
@@ -156,8 +180,28 @@ class _PendingPopupOrchestratorState extends State<PendingPopupOrchestrator> {
 
   @override
   void dispose() {
+    if (_active == this) _active = null;
     _worker?.dispose();
     super.dispose();
+  }
+
+  /// Opens one queued pop-up because she tapped its push (Day 7/15/30,
+  /// follow-up, renew...). Her own tap: no phone cooldown, no daily limit
+  /// (PopupManager.runNow). If it's already done, nothing opens.
+  Future<void> _openFromPush(String variable) async {
+    final paid = Get.find<PaidHomeController>();
+    try {
+      await paid.refreshDashboard();
+    } catch (_) {}
+    final list = paid.dashboard.value?.pendingPopups ?? const <PendingPopup>[];
+    final p = list.firstWhereOrNull((e) => e.variable == variable);
+    if (p == null) return;
+    await PopupManager.runNow('push_$variable', () async {
+      await _markShown(p);
+      try {
+        await _dispatch(p);
+      } catch (_) {}
+    });
   }
 
   Future<void> _maybeShowNext() async {
@@ -169,28 +213,77 @@ class _PendingPopupOrchestratorState extends State<PendingPopupOrchestrator> {
     final list = dashboard.pendingPopups;
     if (list.isEmpty) return;
 
-    // First popup not within its per-popup cooldown — list is already
-    // priority-sorted server-side.
-    final next = list.firstWhereOrNull(
+    // First popup not within its per-popup cooldown, in the planned
+    // order (PopupRank). The server list is already in almost the same
+    // order; sorting here keeps both in step.
+    final ordered = [...list]..sort((a, b) => _rankOf(a).compareTo(_rankOf(b)));
+    final next = ordered.firstWhereOrNull(
       (p) => !_wasRecentlyShown(p),
     );
     if (next == null) return;
 
-    await _markShown(next);
+    // Pop-up manager decides if it may open now. If not, nothing is
+    // marked and it is asked again on a later app open.
     _showing = true;
+    bool shown = false;
     try {
-      await _dispatch(next);
-    } catch (_) {
-      // Swallow; orchestrator is best-effort.
+      shown = await PopupManager.run(
+        'server_${next.variable}',
+        rank: _rankOf(next),
+        urgent: _urgent.contains(next.variable),
+        show: () async {
+          await _markShown(next);
+          try {
+            await _dispatch(next);
+          } catch (_) {
+            // Swallow; orchestrator is best-effort.
+          }
+        },
+      );
     } finally {
       _showing = false;
     }
+    if (!shown) return;
 
     // Refresh the dashboard so the next eligible popup (or the empty
     // state) shows up on the next reactive tick.
     try {
       await paid.refreshDashboard();
     } catch (_) {}
+  }
+
+  /// Urgent: skip the manager's limits (only wait for the open pop-up).
+  static const Set<String> _urgent = {
+    'POPUP_CLASS_CANCELLED',
+    'POPUP_CONSULTATION_CANCELLED',
+  };
+
+  /// Planned order (see PopupRank). Last day of the diet check-in moves up.
+  int _rankOf(PendingPopup p) {
+    switch (p.variable) {
+      case 'POPUP_CLASS_CANCELLED':
+      case 'POPUP_CONSULTATION_CANCELLED':
+        return 0;
+      case 'POPUP_PRE_CONSULTATION_FORM':
+        return PopupRank.healthForm;
+      case 'POPUP_BOOK_INITIAL_CONSULTATION':
+      case 'POPUP_BOOK_INITIAL_REMINDER':
+        return PopupRank.bookSession;
+      case 'POPUP_DAY7_REVIEW':
+      case 'POPUP_DAY15_PROGRESS':
+      case 'POPUP_DAY30_PROGRESS':
+        return PopupRank.progress;
+      case 'POPUP_BOOK_FOLLOWUP_CONSULTATION':
+        return PopupRank.followUp;
+      case 'POPUP_EARLY_CHECKIN':
+        return p.metadata?['lastDay'] == true
+            ? PopupRank.lastDay
+            : PopupRank.dietCheckin;
+      case 'POPUP_RENEW_PLAN':
+        return PopupRank.renew;
+      default:
+        return PopupRank.other;
+    }
   }
 
   // Loads booking-context IDs (dietitianId/userId/userPlanId) and opens
@@ -259,6 +352,31 @@ class _PendingPopupOrchestratorState extends State<PendingPopupOrchestrator> {
         await EarlyCheckinSheet.show(
           onOpenChat: widget.onOpenChat ?? () {},
           onOpenFaq: widget.onOpenFaq ?? () {},
+          firstPlan: meta['firstPlan'] != false,
+        );
+        break;
+
+      case 'POPUP_CLASS_CANCELLED':
+        await ClassCancelledSheet.show(
+          classTime: _readStr('classTime'),
+          classType: _readStr('classType'),
+          nextClass: _readStr('nextClass'),
+          onViewClasses: widget.onOpenWorkoutSchedule ?? () {},
+        );
+        break;
+
+      case 'POPUP_CONSULTATION_CANCELLED':
+        final kind = _readStr('kind') == 'followup' ? 'followup' : 'initial';
+        await ConsultationCancelledSheet.show(
+          reason: _readStr('reason') ?? 'dietitian_cancelled',
+          bonusDays: _readInt('bonusDays') ?? 0,
+          locked: meta['locked'] == true,
+          onPickNewTime: () => _openBookingSheet(
+            popupVariable: kind == 'followup'
+                ? 'POPUP_BOOK_FOLLOWUP_CONSULTATION'
+                : 'POPUP_BOOK_INITIAL_CONSULTATION',
+            kind: kind,
+          ),
         );
         break;
 
@@ -279,7 +397,7 @@ class _PendingPopupOrchestratorState extends State<PendingPopupOrchestrator> {
         // up repeatedly for stale/leftover appointments with no way to
         // self-resolve. It's now surfaced inline, in context, on the Diet
         // tab's UpcomingConsultationCard ("Check status" notice), which
-        // opens this same ConsultantNoShowSheet on demand. Just
+        // (the old report sheet has been removed; the server now decides). Just
         // acknowledge server-side so this queue entry doesn't keep
         // resurfacing here.
         await ctrl.dismissPopup(p.variable);
@@ -287,7 +405,10 @@ class _PendingPopupOrchestratorState extends State<PendingPopupOrchestrator> {
 
       case 'POPUP_RENEW_PLAN':
         await RenewPlanSheet.show(
-          onViewPlans: widget.onOpenRenewalPlans ?? () {},
+          ended: p.metadata?['ended'] == true,
+          // No screen passed a handler, so the button did nothing:
+          // open the plans screen by default.
+          onViewPlans: widget.onOpenRenewalPlans ?? () => Get.to(() => OurPlansScreen()),
         );
         break;
 
@@ -336,12 +457,12 @@ class _PendingPopupOrchestratorState extends State<PendingPopupOrchestrator> {
 
       case 'POPUP_PRE_CONSULTATION_FORM':
         // One pre-consultation form (full screen, signup style). Only the
-        // missing questions; "Later" allowed twice, then required.
+        // missing questions. What needs her answers stays locked on home
+        // and in the Diet tab until she fills it.
         final planType = _readStr('planType') ?? 'diet';
-        await PreConsultationFormScreen.open(
-          planType: planType,
-          canLater: p.dismissCount < 2,
-        );
+        // Oct 2026: never forced. "Later" works every time; only booking
+        // the dietitian needs the answers (checked at booking).
+        await PreConsultationFormScreen.open(planType: planType);
         break;
 
       case 'POPUP_DAY7_REVIEW':

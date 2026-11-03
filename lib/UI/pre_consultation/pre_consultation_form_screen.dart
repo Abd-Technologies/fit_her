@@ -9,6 +9,11 @@ import '../../data/controllers/consultation_controller/consultation_controller.d
 import '../../values/constants.dart';
 import '../../widgets/onboarding_scaffold.dart';
 import '../../widgets/toasts.dart';
+import '../profile_setup/profile_completion.dart';
+import '../free_trail/trial_onboarding_screen.dart';
+import '../auth_module/log_period_screen.dart';
+import '../auth_module/sign_up_screen/sign_up_screen_questions.dart';
+import '../profile_setup/plan_personal_screens.dart';
 import '../auth_module/sign_up_screen/life_stage_screen.dart'
     show kLifeStageOptions, lifeStageHasPeriods;
 
@@ -20,25 +25,160 @@ import '../auth_module/sign_up_screen/life_stage_screen.dart'
 /// Everything she already answered shows on the review screen, with Edit,
 /// right before she sends it with the health consent tick.
 ///
-/// [canLater]: she may tap "Later" (the first 2 times). After that the
-/// form is required and can't be closed until it's sent.
+/// [canLater]: she may tap "Not now". Always true since Oct 2026: the
+/// form is never compulsory; missing answers only lock the parts of the
+/// app that need them (see UI/profile_setup/profile_completion.dart).
 class PreConsultationFormScreen extends StatefulWidget {
   final String planType; // diet | workout | combined
   final bool canLater;
   final String popupVariable;
+
+  /// How many more "Not now" taps she has before the pop-up becomes
+  /// required (null = unlimited, e.g. when she opened it herself).
+  final int? skipsLeft;
 
   const PreConsultationFormScreen({
     super.key,
     this.planType = 'diet',
     this.canLater = true,
     this.popupVariable = 'POPUP_PRE_CONSULTATION_FORM',
+    this.skipsLeft,
   });
 
-  static Future<void> open({required String planType, required bool canLater}) async {
-    await Get.to<void>(
-      () => PreConsultationFormScreen(planType: planType, canLater: canLater),
-      fullscreenDialog: true,
-    );
+  /// Oct 2026: the health form uses the SAME screens as the trial journey
+  /// (TrialOnboardingScreen in setup mode: health, food, movement, class
+  /// times, review + "One last step") and the sign-up style period page
+  /// (LogPeriodScreen), instead of this screen's own design. Only the
+  /// missing parts open. Callers and the 3 "Not now" rule stay the same.
+  ///
+  /// Oct 2026 journey (same for every way in: pop-up, push, Home card,
+  /// booking, notification list):
+  ///   "Your plan just got personal" (once per user)
+  ///   Part 1 · About you   the sign-up pages she has gaps in
+  ///   "Part 1 done"        her numbers, while the app re-checks behind it
+  ///   Part 2 · Your health the setup form (health, food, fitness, review)
+  ///   "Your plan now knows you" reward, then Home
+  /// "Later" works on every step, answers so far stay saved, and it is
+  /// never forced ([canLater] / [skipsLeft] are kept for callers but no
+  /// longer lock anything; the booking gate is the only real requirement).
+  static Future<void> open({required String planType, bool canLater = true, int? skipsLeft}) async {
+    final c = Get.find<ConsultationController>();
+    Set<String> missing(Map<String, dynamic>? r) =>
+        ((r?['required'] as List?) ?? const []).map((e) => '$e').toSet();
+    // Anything the setup form asks (not the sign-up pages).
+    bool healthNeeded(Map<String, dynamic>? r) =>
+        r == null ||
+        missing(r).any((s) => s != 'goal' && s != 'lifeStage' && s != 'cycle') ||
+        r['needsConsent'] == true ||
+        r['needsConfirm'] == true;
+
+    final first = await c.getPreConsultRequirements(planType);
+    final gaps = signupGapPages(first);
+    final askTarget = first?['targetMissing'] == true;
+    final part2 = healthNeeded(first);
+    final parts = (gaps.isNotEmpty ? 1 : 0) + (part2 ? 1 : 0);
+    var skipped = false;
+    var didSomething = false;
+
+    // 1. Explain first, once per user.
+    if (parts > 0 && !PlanPersonalIntro.seen()) {
+      final go = await PlanPersonalIntro.show(planType: planType, parts: parts);
+      if (!go) skipped = true;
+    }
+
+    // 2. Part 1 · About you.
+    Map<String, dynamic>? latest = first;
+    if (!skipped && gaps.isNotEmpty) {
+      final ok = await Get.to<bool>(
+        () => SignUpScreenQuestions(
+          gapPages: gaps,
+          askTarget: askTarget,
+          partLabel: parts > 1 ? 'Part 1 of 2 · About you' : 'About you',
+        ),
+      );
+      if (ok == true) {
+        didSomething = true;
+        if (part2) {
+          // 3. "Part 1 done": re-check runs behind it, no blank spinner.
+          Map<String, dynamic>? fresh;
+          final cont = await PartOneDoneScreen.show(
+            planType: planType,
+            work: () async => fresh = await c.getPreConsultRequirements(planType),
+          );
+          latest = fresh ?? latest;
+          if (!cont) skipped = true;
+        } else {
+          latest = await c.getPreConsultRequirements(planType);
+        }
+      } else {
+        skipped = true;
+      }
+    }
+
+    // 4. Part 2 · Your health.
+    if (!skipped && healthNeeded(latest)) {
+      final done = await Get.to<bool>(
+        () => TrialOnboardingScreen(
+          setupMode: true,
+          includeClasses: planType != 'diet',
+          canSkip: true,
+          partLabel: parts > 1
+              ? (planType == 'workout' ? 'Part 2 of 2 · Your health & fitness' : 'Part 2 of 2 · Your health')
+              : null,
+        ),
+        fullscreenDialog: true,
+      );
+      skipped = done != true;
+      if (!skipped) didSomething = true;
+    }
+    if (!skipped) {
+      // Period date: the sign-up style page, only if still missing.
+      final after = await c.getPreConsultRequirements(planType);
+      if (missing(after).contains('cycle')) {
+        final ok = await Get.to<bool>(() => const LogPeriodScreen());
+        if (ok != true) skipped = true;
+      }
+    }
+
+    if (skipped) {
+      // "Later": back off the pop-up. Never a lock (Oct 2026).
+      await c.dismissPopup('POPUP_PRE_CONSULTATION_FORM');
+    } else {
+      final fin = await c.getPreConsultRequirements(planType);
+      if (fin != null && fin['shouldShow'] != true) {
+        await c.completePopup('POPUP_PRE_CONSULTATION_FORM');
+      }
+      // 5. The reward: what just changed for her.
+      if (didSomething) await ProfileDoneScreen.show(planType: planType);
+    }
+    try {
+      await ProfileCompletion.to.reload(force: true);
+    } catch (_) {}
+  }
+
+  /// SharedPreferences key: how many times she tapped "Not now" on the
+  /// pop-up (per user).
+  static String skipsKey() {
+    final id = Get.isRegistered<AuthController>()
+        ? Get.find<AuthController>().logInUser?.id
+        : null;
+    return 'health_form_skips_${id ?? 0}';
+  }
+
+  /// From the reminder push and the notification list: open the form
+  /// straight away (not via the pop-up queue, whose 3-day cooldown could
+  /// swallow the tap). If nothing is missing any more, just say so.
+  static Future<void> openIfNeeded() async {
+    if (!Get.isRegistered<ConsultationController>()) return;
+    final req = await Get.find<ConsultationController>().getPreConsultRequirements('diet');
+    if (req != null && req['shouldShow'] != true) {
+      CustomToast.successToast(msg: 'Your health form is already done 💚');
+      return;
+    }
+    await open(planType: '${req?['planType'] ?? 'diet'}', canLater: true);
+    try {
+      await ProfileCompletion.to.reload(force: true);
+    } catch (_) {}
   }
 
   @override
@@ -68,7 +208,23 @@ const _conditions = [
   _Opt('Diabetes', '💉', 'Diabetes'),
   _Opt('Endometriosis', '🩸', 'Endometriosis'),
   _Opt('Arthritis', '🦴', 'Arthritis'),
+  _Opt('Insulin resistance', '🍬', 'Insulin resistance'),
+  _Opt('High BP', '❤️', 'High BP'),
+  _Opt('High cholesterol', '🧈', 'High cholesterol'),
+  _Opt('Anemia', '🩸', 'Anemia'),
 ];
+
+/// Allergy quick picks (same list as the trial onboarding form).
+const _allergyOptions = <String>[
+  'Peanuts', 'Tree nuts', 'Dairy / lactose', 'Gluten / wheat',
+  'Eggs', 'Fish', 'Shellfish', 'Soy',
+];
+/// "For your dietitian" quick picks (Oct 2026): tap chips like the other
+/// steps, plus a box for anything else. Saved as the same text as before.
+const _medOptions = <String>['Metformin', 'Thyroid tablets', 'Birth control pills', 'Iron / vitamins', 'Insulin'];
+const _familyOptions = <String>['Diabetes', 'Heart problems', 'High blood pressure', 'Thyroid', 'PCOS'];
+const _surgeryOptions = <String>['C-section', 'Gallbladder', 'Appendix'];
+
 const _diet = [
   _Opt('no_restrictions', '🍽️', 'Eat everything'),
   _Opt('vegetarian', '🥦', 'Vegetarian'),
@@ -85,6 +241,72 @@ const _fitness = [
 ];
 
 class _PreConsultationFormScreenState extends State<PreConsultationFormScreen> {
+  List<String> get _allergyItems => _allergies.text
+      .split(',')
+      .map((e) => e.trim())
+      .where((e) => e.isNotEmpty && e.toLowerCase() != 'none')
+      .toList();
+
+  List<String> _itemsOf(TextEditingController c) => c.text
+      .split(',')
+      .map((e) => e.trim())
+      .where((e) => e.isNotEmpty && e.toLowerCase() != 'none')
+      .toList();
+
+  void _toggleIn(TextEditingController c, String o) {
+    final items = _itemsOf(c);
+    final i = items.indexWhere((e) => e.toLowerCase() == o.toLowerCase());
+    if (i >= 0) {
+      items.removeAt(i);
+    } else {
+      items.add(o);
+    }
+    c.text = items.join(', ');
+  }
+
+  /// One question of the "For your dietitian" step: chips + "None" + box.
+  Widget _pickGroup(String label, List<String> options, TextEditingController c,
+      String hint, {bool first = false}) {
+    final items = _itemsOf(c);
+    final none = c.text.trim().toLowerCase() == 'none';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _Label(label, top: first ? 0 : 16),
+        Wrap(
+          spacing: 8.w,
+          runSpacing: 8.h,
+          children: [
+            for (final o in options)
+              _Chip(
+                label: o,
+                selected: items.any((e) => e.toLowerCase() == o.toLowerCase()),
+                onTap: () => setState(() => _toggleIn(c, o)),
+              ),
+            _Chip(
+              label: 'None',
+              selected: none,
+              onTap: () => setState(() => c.text = none ? '' : 'None'),
+            ),
+          ],
+        ),
+        SizedBox(height: 10.h),
+        _Field(controller: c, hint: hint),
+      ],
+    );
+  }
+
+  void _toggleAllergy(String o) {
+    final items = _allergyItems;
+    final i = items.indexWhere((e) => e.toLowerCase() == o.toLowerCase());
+    if (i >= 0) {
+      items.removeAt(i);
+    } else {
+      items.add(o);
+    }
+    _allergies.text = items.join(', ');
+  }
+
   final ConsultationController _ctrl = Get.find<ConsultationController>();
   final AuthController _auth = Get.find<AuthController>();
 
@@ -200,7 +422,17 @@ class _PreConsultationFormScreenState extends State<PreConsultationFormScreen> {
 
   Future<void> _later() async {
     await _ctrl.dismissPopup(widget.popupVariable);
+    if (widget.skipsLeft != null) {
+      final prefs = _auth.sharedPreferences;
+      final key = PreConsultationFormScreen.skipsKey();
+      await prefs.setInt(key, (prefs.getInt(key) ?? 0) + 1);
+    }
     if (mounted) Get.back<void>();
+    // Her last "Not now": tell her the next one can't be skipped.
+    if (widget.skipsLeft == 1) {
+      CustomToast.warnToast('Next time your health form is needed',
+          sub: 'Your dietitian needs these answers to plan safely for you. It takes about 2 minutes.');
+    }
   }
 
   /// Edit from the review: open that step even if it was skipped.
@@ -408,7 +640,7 @@ class _PreConsultationFormScreenState extends State<PreConsultationFormScreen> {
                 if (ok) _goNext();
               }
             : (showLater ? _later : null),
-        skipText: optionalStep ? 'Skip for now' : (showLater ? 'Later' : null),
+        skipText: optionalStep ? 'Skip for now' : (showLater ? 'Not now' : null),
         body: _body(step),
       ),
     );
@@ -490,7 +722,20 @@ class _PreConsultationFormScreenState extends State<PreConsultationFormScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _Field(controller: _allergies, hint: 'For example peanuts, lactose'),
+            Wrap(
+              spacing: 8.w,
+              runSpacing: 8.h,
+              children: [
+                for (final o in _allergyOptions)
+                  _Chip(
+                    label: o,
+                    selected: _allergyItems.any((e) => e.toLowerCase() == o.toLowerCase()),
+                    onTap: () => setState(() => _toggleAllergy(o)),
+                  ),
+              ],
+            ),
+            SizedBox(height: 12.h),
+            _Field(controller: _allergies, hint: 'Something else? Type it here'),
             SizedBox(height: 10.h),
             _Chip(
               label: 'No allergies',
@@ -543,12 +788,12 @@ class _PreConsultationFormScreenState extends State<PreConsultationFormScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const _Label('Medicines you take', top: 0),
-            _Field(controller: _meds, hint: 'For example Metformin, thyroid tablets'),
-            const _Label('Family history'),
-            _Field(controller: _family, hint: 'For example diabetes, heart problems'),
-            const _Label('Past surgeries'),
-            _Field(controller: _surgeries, hint: 'For example C section in 2022'),
+            _pickGroup('Medicines you take', _medOptions, _meds,
+                'Something else? Type it here', first: true),
+            _pickGroup('Family history', _familyOptions, _family,
+                'Something else? Type it here'),
+            _pickGroup('Past surgeries', _surgeryOptions, _surgeries,
+                'Something else? For example the year'),
           ],
         );
       case 'workout':

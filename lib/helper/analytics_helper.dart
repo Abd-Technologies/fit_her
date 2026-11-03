@@ -20,14 +20,13 @@ class AnalyticsHelper {
   }
 
   // Track login events
-  static Future<void> trackLogin(String method) async {
-    await _analyticsService.logLogin(method: method);
-  }
+  // Retired (Oct 2026): fired on the button tap, before the server
+  // answered. Now login_completed / login_failed (see bottom of file).
+  static Future<void> trackLogin(String method) async {}
 
   // Track sign up events
-  static Future<void> trackSignUp(String method) async {
-    await _analyticsService.logSignUp(method: method);
-  }
+  // Retired (Oct 2026): now signup_completed / signup_failed.
+  static Future<void> trackSignUp(String method) async {}
 
   // Track tutorial completion
   static Future<void> trackTutorialComplete({String? tutorialName}) async {
@@ -66,11 +65,7 @@ class AnalyticsHelper {
   // Track class view
   static Future<void> trackClassView(String className,
       {String? classType, String? instructorName}) async {
-    await _analyticsService.logClassView(
-      className: className,
-      classType: classType,
-      instructorName: instructorName,
-    );
+    // Retired (Oct 2026): counted in the admin app, not Mixpanel.
   }
 
   // Track tutorial events
@@ -277,7 +272,8 @@ class AnalyticsHelper {
       action: action,
       questionnaireType: questionnaireType,
       questionNumber: questionNumber,
-      answer: answer,
+      // Health answers (e.g. PCOS risk result) never go to Mixpanel.
+      answer: null,
       additionalParams: additionalParams,
     );
   }
@@ -291,7 +287,7 @@ class AnalyticsHelper {
 
   /// Track weekly attendance (motivation)
   static Future<void> trackWeeklyAttendance({String? slotId}) async {
-    await _analyticsService.logWeeklyAttendance(slotId: slotId);
+    // Retired (Oct 2026): attendance is counted exactly in the admin app.
   }
 
   /// Track free trial key event
@@ -466,15 +462,8 @@ class AnalyticsHelper {
     int? durationSeconds,
     String? exitReason,
   }) async {
-    await _analyticsService.logWorkoutClassLeft(
-      slotId: slotId,
-      className: className,
-      trainerName: trainerName,
-      userTier: userTier,
-      durationMinutes: durationMinutes,
-      durationSeconds: durationSeconds,
-      exitReason: exitReason,
-    );
+    // Retired (Oct 2026): minutes in class are counted exactly in the
+    // admin app (class diary), not Mixpanel.
   }
 
   /// User viewed workout schedule timeline
@@ -519,4 +508,72 @@ class AnalyticsHelper {
       linkType: linkType,
     );
   }
+
+  // ========== Growth analytics (Oct 2026) ==========
+  // See growth_analytics_design (fitHer Flows). One place for every new
+  // event name, so names never drift.
+
+  static Future<void> track(String name, [Map<String, dynamic>? props]) =>
+      _analyticsService.trackEvent(name, props);
+
+  /// Same event at most once a minute (for screens built many times).
+  static final Map<String, DateTime> _recent = {};
+  static Future<void> trackOnce(String name, [Map<String, dynamic>? props]) async {
+    final key = '$name${props ?? ''}';
+    final last = _recent[key];
+    if (last != null && DateTime.now().difference(last).inSeconds < 60) return;
+    _recent[key] = DateTime.now();
+    await track(name, props);
+  }
+
+  /// Profile / super properties (no names): user_type, plan_state,
+  /// plan_type, signup_source, signup_method, goal, app_version.
+  static Future<void> setProfile(Map<String, dynamic> props) =>
+      _analyticsService.setProfile(props);
+
+  static Future<void> resetUser() => _analyticsService.resetUser();
+
+  // Sign-up & login (sent AFTER the server answers)
+  static Future<void> signupStepViewed(String step) =>
+      track('signup_step_viewed', {'step': step});
+  static Future<void> signupCompleted(String method) =>
+      track('signup_completed', {'method': method});
+  static Future<void> signupFailed(String method, String reason) =>
+      track('signup_failed', {'method': method, 'reason': reason});
+  static Future<void> loginCompleted(String method, {String? userType}) =>
+      track('login_completed', {'method': method, 'user_type': userType});
+  static Future<void> loginFailed(String method, String reason) =>
+      track('login_failed', {'method': method, 'reason': reason});
+  static Future<void> passwordReset(String step) =>
+      track('password_reset', {'step': step});
+  static Future<void> notificationPermission(bool granted) =>
+      track('notification_permission', {'granted': granted});
+  static Future<void> logout() async {
+    await track('Logout');
+    await resetUser();
+  }
+
+  // Workout
+  static Future<void> classReminderSet(String mode) =>
+      track('class_reminder_set', {'mode': mode});
+  static Future<void> classTimesPicked(int count, {bool allClasses = false}) =>
+      track('class_times_picked', {'count': count, 'all_classes': allClasses});
+  static Future<void> classJoinButtonSeen({required String where, required String tier, bool rejoin = false}) =>
+      track('class_join_button_seen', {'where': where, 'user_tier': tier, 'rejoin': rejoin});
+  static Future<void> workoutJoinFailed(String reason, {String? slotId, String? tier}) =>
+      track('workout_join_failed', {'reason': reason, 'slot_id': slotId, 'user_tier': tier});
+  static Future<void> classFeedbackCard(String action, {int? stars}) =>
+      track('class_feedback_card', {'action': action, 'stars': stars});
+
+  // Engagement & upsell
+  static Future<void> pushOpened(String? type, {bool coldStart = false}) =>
+      track('push_opened', {'type': type ?? 'unknown', 'cold_start': coldStart});
+  static Future<void> offerSeen(String where, {String? offer}) =>
+      trackOnce('offer_seen', {'where': where, 'offer': offer});
+  static Future<void> offerTapped(String where, {String? offer}) =>
+      track('offer_tapped', {'where': where, 'offer': offer});
+  static Future<void> checkoutStarted({String? planName, String? price}) =>
+      trackOnce('checkout_started', {'plan_name': planName, 'price': price});
+  static Future<void> paymentMethodChosen(String method) =>
+      track('payment_method_chosen', {'method': method});
 }

@@ -10,12 +10,18 @@ import 'package:intl_phone_field/intl_phone_field.dart';
 
 import '../../../widgets/toasts.dart';
 import '../../../helper/analytics_helper.dart';
+import '../walt_through/animated_cycle_wheel.dart';
+import 'dart:math' as math;
 
 class SignUpNewUser extends StatefulWidget {
-  SignUpNewUser({Key? key, this.supporterId, this.isSocial = false})
+  SignUpNewUser({Key? key, this.supporterId, this.isSocial = false, this.fromWelcome = false})
       : super(key: key);
   final String? supporterId;
   final bool isSocial;
+
+  /// Opened from the Welcome screen's "Get started": the ring flies in
+  /// (Hero) and the card slides up (and back down on Back) — same as Login.
+  final bool fromWelcome;
 
   @override
   State<SignUpNewUser> createState() => _SignUpNewUserState();
@@ -60,6 +66,45 @@ class _SignUpNewUserState extends State<SignUpNewUser> {
     super.dispose();
   }
 
+  // Same ring as the Welcome / Login screens (topic word only, "28" keeps
+  // its line). Flies in only when opened from Welcome's "Get started".
+  Widget _buildRing() {
+    // sizeOf / disableAnimationsOf (not MediaQuery.of): .of also listens to
+    // the keyboard, so the whole form rebuilt on every frame of the keyboard
+    // sliding up, which made it open slowly.
+    final screenH = MediaQuery.sizeOf(context).height;
+    // Smaller than on Login: the sign-up form is longer.
+    final size = math.min(118.w, screenH * 0.145);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(36.w, 0, 36.w, 10.h),
+      child: Center(
+        child: HeroMode(
+          enabled: widget.fromWelcome && !MediaQuery.disableAnimationsOf(context),
+          child: Hero(
+            tag: AnimatedCycleWheel.heroTag,
+            flightShuttleBuilder: AnimatedCycleWheel.heroFlight,
+            child: RepaintBoundary(
+              child: AnimatedCycleWheel(size: size, drawIn: !widget.fromWelcome, showCaption: false),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// From Welcome: the white card rises with the page (and slides back
+  /// down on Back). Otherwise unchanged.
+  Widget _sheetEntrance(Widget sheet) {
+    final route = ModalRoute.of(context)?.animation;
+    if (!widget.fromWelcome || route == null || MediaQuery.disableAnimationsOf(context)) return sheet;
+    return SlideTransition(
+      position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero).animate(
+        CurvedAnimation(parent: route, curve: Curves.fastOutSlowIn, reverseCurve: Curves.fastOutSlowIn.flipped),
+      ),
+      child: RepaintBoundary(child: sheet),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -101,14 +146,23 @@ class _SignUpNewUserState extends State<SignUpNewUser> {
             SafeArea(
               child: Column(
                 children: [
-                  // ── Back button ──
-                  Align(
+                  // ── Back button + ring on one row (saves height) ──
+                  Stack(
+                    children: [
+                      Padding(
+                        padding: EdgeInsets.only(top: 6.h),
+                        child: _buildRing(),
+                      ),
+                      Align(
                     alignment: Alignment.topLeft,
                     child: Padding(
-                      padding: EdgeInsets.only(left: 8.w, top: 8.h),
+                      padding: EdgeInsets.only(left: 8.w, top: 2.h),
                       child: IconButton(
                         onPressed: () {
-                          if (widget.supporterId == null) {
+                          // Login opens this screen with Get.off, so often
+                          // there is no screen underneath: go to Login then.
+                          if (widget.supporterId == null &&
+                              Navigator.of(context).canPop()) {
                             Get.back();
                           } else {
                             Get.off(() => Login());
@@ -119,20 +173,12 @@ class _SignUpNewUserState extends State<SignUpNewUser> {
                       ),
                     ),
                   ),
-
-                  // ── Hero logo ──
-                  Padding(
-                    padding: EdgeInsets.only(top: 4.h, bottom: 16.h),
-                    child: Image.asset(
-                      MyImgs.fitHerLogo,
-                      width: 120.w,
-                      fit: BoxFit.contain,
-                    ),
+                    ],
                   ),
 
                   // ── Bottom sheet ──
                   Expanded(
-                    child: Container(
+                    child: _sheetEntrance(Container(
                       width: double.infinity,
                       decoration: BoxDecoration(
                         color: Colors.white,
@@ -140,8 +186,7 @@ class _SignUpNewUserState extends State<SignUpNewUser> {
                             BorderRadius.vertical(top: Radius.circular(25.r)),
                       ),
                       child: SingleChildScrollView(
-                        padding: EdgeInsets.symmetric(
-                            horizontal: 24.w, vertical: 28.h),
+                        padding: EdgeInsets.fromLTRB(24.w, 22.h, 24.w, 28.h),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -496,7 +541,7 @@ class _SignUpNewUserState extends State<SignUpNewUser> {
                           ],
                         ),
                       ),
-                    ),
+                    )),
                   ),
                 ],
               ),
@@ -616,9 +661,13 @@ class _SignUpNewUserState extends State<SignUpNewUser> {
     authController.lastNameController.text = lastName;
     authController.phoneNumberController.text = phone;
 
-    await AnalyticsHelper.trackSignUp('email');
+    // signup_completed / signup_failed are sent after the server answers.
+    final method = widget.isSocial
+        ? (authController.sharedPreferences.getString('last_social_provider') ?? 'google')
+        : 'email';
 
     Get.find<HomeController>().addUser(
+      signupMethod: method,
       status: false,
       firstName: firstName,
       lastName: lastName,

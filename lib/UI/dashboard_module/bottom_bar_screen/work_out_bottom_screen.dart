@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import '../../../data/controllers/consultation_controller/consultation_controller.dart';
+import '../../../widgets/class_reminder/class_reminder_flow.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,6 +18,7 @@ import '../../../helper/analytics_helper.dart';
 import '../../../utils/app_clock.dart';
 import '../../../utils/slot_input_builder.dart';
 import '../../../utils/slot_ui_state.dart';
+import '../../../utils/trial_join_window.dart';
 import '../../../widgets/app_bar_widget.dart';
 import '../../../widgets/circular_progress.dart';
 
@@ -31,9 +34,18 @@ class WorkOutBottomScreen extends StatefulWidget {
     super.key,
     required this.planId,
     this.showBackButton = true,
+    this.previewCtaLabel,
+    this.onPreviewCta,
   });
   final String planId;
   final bool showBackButton;
+
+  /// Unpaid preview of the schedule (same design as paid): every class
+  /// button becomes this CTA and tapping a class runs [onPreviewCta].
+  ///   trial not started → "Try free →" (starts the trial flow)
+  ///   trial ended       → "Choose a plan →" (summary + offer)
+  final String? previewCtaLabel;
+  final VoidCallback? onPreviewCta;
 
   @override
   State<WorkOutBottomScreen> createState() => _WorkOutBottomScreenState();
@@ -116,6 +128,7 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
     );
 
     WidgetsBinding.instance.addObserver(this);
+    _loadReminderPicks();
 
     // Attendance stats power the past-class ✓ checkmark (per-date, not
     // per-slot — a Phase D backend ticket will add per-slot precision).
@@ -477,6 +490,23 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
       );
     }
 
+    // Today's next class is shown big, like the home card:
+    //   UP NEXT → (15 min before) Get ready + countdown → Join now (live).
+    // Preview (no package): the button is Try free / Choose a plan.
+    _featuredSlotId = null;
+    final nowD = AppClock.now();
+    final viewingToday = _selectedDate.year == nowD.year &&
+        _selectedDate.month == nowD.month &&
+        _selectedDate.day == nowD.day;
+    if (viewingToday) {
+      for (final sl in slots) {
+        final st = _stateFor(sl);
+        if (st == SlotUIState.cancelled || st == SlotUIState.endedEarly || _isPastState(st)) continue;
+        _featuredSlotId = sl.id;
+        break;
+      }
+    }
+
     final activeIndex = _findActiveSlotIndex(slots);
     if (!_hasAutoScrolled && activeIndex > 0) {
       _scrollToActiveSlot();
@@ -541,10 +571,16 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
     final mins = (state == SlotUIState.upcomingSoon && input != null)
         ? minutesUntilStart(input.start, AppClock.now())
         : null;
-    final presentation = presentationForState(
+    // Trial: past the join window → "Joining closed" (same as Home).
+    final presentation = applyTrialJoinWindow(
+      presentationForState(
+        state,
+        minutesUntilStart: mins,
+        blockReason: blockReasonFor(access),
+      ),
       state,
-      minutesUntilStart: mins,
-      blockReason: blockReasonFor(access),
+      start: input?.start,
+      slotId: slot.id,
     );
     return KeyedSubtree(
       key: key,
@@ -710,6 +746,14 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
   // ── Class card variants ─────────────────────────────────────────────────
   Widget _buildCard(
       Slot slot, SlotUIState state, SlotPresentation presentation) {
+    if (_featuredSlotId != null && slot.id == _featuredSlotId) {
+      // Live (trainer started / class time) for a member: the existing
+      // live card with its Join now button.
+      if (widget.onPreviewCta == null && _isLiveState(state)) {
+        return _buildLiveCard(slot, presentation);
+      }
+      return _buildPreviewFeaturedCard(slot, state);
+    }
     if (state == SlotUIState.cancelled) return _buildCancelledCard(slot);
     if (state == SlotUIState.endedEarly) return _buildEndedEarlyCard(slot);
     if (_isPastState(state)) return _buildPastCard(slot);
@@ -964,6 +1008,25 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
     if (presentation.appearance == SlotButtonAppearance.hidden) {
       return const SizedBox.shrink();
     }
+    if (widget.onPreviewCta != null) {
+      return SizedBox(
+        width: double.infinity,
+        child: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _accent,
+            foregroundColor: dark ? _liveBgDark : Colors.white,
+            elevation: 0,
+            padding: EdgeInsets.symmetric(vertical: 12.h),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          onPressed: widget.onPreviewCta,
+          child: Text(
+            widget.previewCtaLabel ?? 'Try free →',
+            style: TextStyle(fontFamily: 'Poppins', fontSize: 13.sp, fontWeight: FontWeight.w800),
+          ),
+        ),
+      );
+    }
     final isEnabled = presentation.appearance == SlotButtonAppearance.enabled;
     final bg = switch (presentation.buttonColor) {
       SlotButtonColor.accent => _accent,
@@ -1008,6 +1071,245 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
     );
   }
 
+  int? _featuredSlotId;
+
+  // Her reminder picks (same "Remind me" as the home card).
+  Map<String, dynamic>? _ws;
+  bool _reminderAdded = false;
+
+  Future<void> _loadReminderPicks() async {
+    if (widget.onPreviewCta != null) return;
+    try {
+      final p = await Get.find<ConsultationController>().loadProfile();
+      if (mounted) {
+        setState(() {
+          _ws = Map<String, dynamic>.from(p?.workoutSection ?? const {});
+          _reminderAdded = false;
+        });
+      }
+    } catch (_) {}
+  }
+
+  /// Home-card chip: "Pick 2 times" (default all classes), "Reminder on",
+  /// or a tappable "Remind me" (adds it / swap sheet / just this once).
+  Widget _reminderChip(Slot slot) {
+    final ws = _ws;
+    if (ws == null) return const SizedBox.shrink();
+    final pickTimes = !_reminderAdded && ClassReminderFlow.isDefaultAll(ws);
+    final on = _reminderAdded ||
+        ClassReminderFlow.isReminded(ws: ws, slotId: slot.id, start: slot.start, dayOffset: 0);
+    final label = pickTimes ? 'Pick your times' : (on ? 'Reminder on' : 'Remind me');
+    final icon = pickTimes
+        ? Icons.tune_rounded
+        : (on ? Icons.notifications_active_rounded : Icons.notifications_none_rounded);
+    final filled = on && !pickTimes;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: pickTimes
+          ? () async {
+              await ClassReminderFlow.openTimePicker();
+              _loadReminderPicks();
+            }
+          : on
+              ? null
+              : () async {
+                  final ok = await ClassReminderFlow.request(
+                    slotId: slot.id,
+                    start: slot.start ?? '',
+                    dayOffset: 0,
+                  );
+                  if (!mounted) return;
+                  if (ok) setState(() => _reminderAdded = true);
+                  _loadReminderPicks();
+                },
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 11.w, vertical: 7.h),
+        decoration: BoxDecoration(
+          color: filled ? _accent.withValues(alpha: 0.18) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _accent.withValues(alpha: filled ? 0 : 0.6)),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 14, color: _accent),
+          SizedBox(width: 5.w),
+          Text(label,
+              style: TextStyle(
+                  fontFamily: 'Poppins', fontSize: 11.sp, fontWeight: FontWeight.w700, color: _accent)),
+        ]),
+      ),
+    );
+  }
+
+  /// Preview mode only: the next class, dark "UP NEXT" card (same look as
+  /// the home card) + the preview button (Try free → / Choose a plan →).
+  Widget _buildPreviewFeaturedCard(Slot slot, SlotUIState state) {
+    final intensity = _intensityFromSlotType(slot.type);
+    final duration = _durationMinutes(slot);
+    final trainer = _trainerName(slot);
+    final live = _isLiveState(state);
+    final input = buildSlotInput(slot, _selectedDate);
+    final now = AppClock.now();
+    String when = slot.start ?? '';
+    if (input != null && !live) {
+      final mins = input.start.difference(now).inMinutes;
+      final isToday = _selectedDate.year == now.year &&
+          _selectedDate.month == now.month &&
+          _selectedDate.day == now.day;
+      final inText = mins <= 0
+          ? ''
+          : mins < 60
+              ? ' · in $mins min'
+              : ' · in ${mins ~/ 60}h ${mins % 60}m';
+      when = '${isToday ? 'Today' : DateFormat('EEE').format(_selectedDate)} · '
+          '${DateFormat('h:mm a').format(input.start)}${isToday ? inText : ''}';
+    }
+    final preview = widget.onPreviewCta != null;
+    final minsToStart = input?.start.difference(now).inMinutes;
+    // Member: 15 min before start → "Get ready" + countdown (same as home).
+    final getReady = !preview && !live && minsToStart != null && minsToStart < 15;
+    final badgeColor = live ? _liveRed : _moderate;
+    final badgeText = live
+        ? 'LIVE NOW'
+        : getReady
+            ? 'STARTING IN ${(minsToStart ?? 0) + 1} MIN'
+            : 'UP NEXT';
+    return GestureDetector(
+      onTap: preview ? widget.onPreviewCta : () => _onSlotTap(slot),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: Stack(
+          children: [
+            Container(
+              padding: EdgeInsets.all(18.w),
+              decoration: BoxDecoration(
+                color: _liveBgDark,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 4.h),
+                    decoration: BoxDecoration(
+                      color: badgeColor.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(color: badgeColor, shape: BoxShape.circle),
+                      ),
+                      SizedBox(width: 6.w),
+                      Text(
+                        badgeText,
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 9.5.sp,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.6,
+                          color: badgeColor,
+                        ),
+                      ),
+                    ]),
+                  ),
+                  SizedBox(height: 10.h),
+                  Text(
+                    slot.type ?? 'Class',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 18.sp,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      height: 1.1,
+                    ),
+                  ),
+                  SizedBox(height: 3.h),
+                  Text(
+                    _metaLine(trainer, duration, _intensityLabel(intensity)),
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 11.sp,
+                      color: Colors.white.withValues(alpha: 0.6),
+                    ),
+                  ),
+                  if (getReady && input != null) ...[
+                    SizedBox(height: 10.h),
+                    Row(children: [
+                      Text(
+                        'Starts at ${DateFormat('h:mm a').format(input.start)}  ·  ',
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 12.sp,
+                          color: Colors.white.withValues(alpha: 0.7),
+                        ),
+                      ),
+                      _Countdown(to: input.start),
+                    ]),
+                  ] else if (when.isNotEmpty) ...[
+                    SizedBox(height: 10.h),
+                    Row(children: [
+                      Expanded(
+                        child: Text(
+                          live ? 'Happening now' : when,
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 12.sp,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white.withValues(alpha: 0.85),
+                          ),
+                        ),
+                      ),
+                      // Member, UP NEXT: same Remind me as the home card.
+                      if (!preview && !live) _reminderChip(slot),
+                    ]),
+                  ],
+                  if (preview || getReady) ...[
+                    SizedBox(height: 14.h),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: preview ? _accent : Colors.white.withValues(alpha: 0.14),
+                          foregroundColor: preview ? _liveBgDark : Colors.white,
+                          elevation: 0,
+                          padding: EdgeInsets.symmetric(vertical: 12.h),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        // Member "Get ready": Join now appears when the
+                        // trainer starts (live card takes over).
+                        onPressed: preview ? widget.onPreviewCta : () => _onSlotTap(slot),
+                        child: Text(
+                          preview ? (widget.previewCtaLabel ?? 'Try free →') : 'Get ready',
+                          style: TextStyle(fontFamily: 'Poppins', fontSize: 13.sp, fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Positioned(
+              top: -30.h,
+              right: -30.w,
+              child: IgnorePointer(
+                child: Container(
+                  width: 120.w,
+                  height: 120.w,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _accent.withValues(alpha: 0.12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildLiveCard(Slot slot, SlotPresentation presentation) {
     final intensity = _intensityFromSlotType(slot.type);
     final duration = _durationMinutes(slot);
@@ -1037,7 +1339,9 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
                         // joinable — it's misleading next to a grey button.
                         presentation.appearance == SlotButtonAppearance.enabled
                             ? _liveCommunityCopy
-                            : 'Trainer is setting up',
+                            : _joinClosed(presentation)
+                                ? 'Class has started · see you at the next one'
+                                : 'Get ready · starting any moment',
                         style: TextStyle(
                           fontFamily: 'Poppins',
                           fontSize: 11.sp,
@@ -1099,10 +1403,14 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
   // [SlotPresentation] the button uses, so it can never disagree with
   // the button's enabled state. Red "LIVE" only when the button is
   // actually joinable; otherwise an amber "STARTING SOON" pill.
+  // Trial join window is over (utils/trial_join_window.dart).
+  bool _joinClosed(SlotPresentation p) => p.buttonLabel == 'Joining closed';
+
   Widget _buildLiveCardBadge(SlotPresentation presentation) {
     final isLive = presentation.appearance == SlotButtonAppearance.enabled;
-    final bgColor = isLive ? _liveRed : _moderate;
-    final label = isLive ? 'LIVE' : 'STARTING SOON';
+    final closed = _joinClosed(presentation);
+    final bgColor = isLive ? _liveRed : closed ? Colors.white24 : _moderate;
+    final label = isLive ? 'LIVE' : closed ? 'STARTED' : 'STARTING SOON';
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 3.h),
       decoration: BoxDecoration(
@@ -1144,6 +1452,10 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
   // opens immediately; when the patch returns we call setState so any
   // freshly-flipped status reaches the bottom-sheet's button.
   void _onSlotTap(Slot slot) {
+    if (widget.onPreviewCta != null) {
+      widget.onPreviewCta!();
+      return;
+    }
     final id = slot.id;
     workOutController.refreshSlotStatus(id).then((patch) {
       if (!mounted || patch == null) return;
@@ -1302,3 +1614,49 @@ class _WorkOutBottomScreenState extends State<WorkOutBottomScreen>
 }
 
 enum _IntensityLevel { gentle, moderate, intense, restorative }
+
+/// mm:ss countdown for the "Get ready" card (own 1 s timer, so the whole
+/// timeline doesn't rebuild every second).
+class _Countdown extends StatefulWidget {
+  final DateTime to;
+  const _Countdown({required this.to});
+
+  @override
+  State<_Countdown> createState() => _CountdownState();
+}
+
+class _CountdownState extends State<_Countdown> {
+  Timer? _t;
+
+  @override
+  void initState() {
+    super.initState();
+    _t = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _t?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    var left = widget.to.difference(AppClock.now());
+    if (left.isNegative) left = Duration.zero;
+    final m = left.inMinutes.toString().padLeft(2, '0');
+    final sec = (left.inSeconds % 60).toString().padLeft(2, '0');
+    return Text(
+      '$m:$sec',
+      style: const TextStyle(
+        fontFamily: 'Poppins',
+        fontSize: 14,
+        fontWeight: FontWeight.w800,
+        color: Colors.white,
+        fontFeatures: [FontFeature.tabularFigures()],
+      ),
+    );
+  }
+}

@@ -1,3 +1,4 @@
+import '../../helper/analytics_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
@@ -188,7 +189,10 @@ class _LapsedPlanCard extends StatelessWidget {
           const SizedBox(height: 10),
           GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => Get.to<dynamic>(() => OurPlansScreen()),
+            onTap: () {
+              AnalyticsHelper.offerTapped('reactivate_card');
+              Get.to<dynamic>(() => OurPlansScreen());
+            },
             child: Container(
               alignment: Alignment.center,
               padding: const EdgeInsets.symmetric(vertical: 12),

@@ -12,6 +12,36 @@ import '../../widgets/toasts.dart';
 import '../dashboard_module/bottom_bar_screen/bottom_bar_screen.dart';
 import 'trial_meal_plan_screen.dart';
 
+// ── Resume where she left off (Oct 2026) ────────────────────────────────
+String _stepKey() {
+  try {
+    return 'trial_onb_step_${Get.find<AuthController>().logInUser?.id ?? ''}';
+  } catch (_) {
+    return 'trial_onb_step_';
+  }
+}
+
+void saveTrialOnboardingStep(int step) {
+  try {
+    Get.find<AuthController>().sharedPreferences.setInt(_stepKey(), step);
+  } catch (_) {}
+}
+
+/// The trial form screen she was on when she left (0 = not started).
+int savedTrialOnboardingStep() {
+  try {
+    return Get.find<AuthController>().sharedPreferences.getInt(_stepKey()) ?? 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+void clearTrialOnboardingStep() {
+  try {
+    Get.find<AuthController>().sharedPreferences.remove(_stepKey());
+  } catch (_) {}
+}
+
 /// Free trial onboarding. The trial only starts once this is finished
 /// and the answers are confirmed:
 ///
@@ -33,7 +63,32 @@ import 'trial_meal_plan_screen.dart';
 /// On finish: start trial (idempotent) -> generate + activate the AI
 /// starter plan -> mark trial active on the device -> meal plan screen.
 class TrialOnboardingScreen extends StatefulWidget {
-  const TrialOnboardingScreen({super.key});
+  const TrialOnboardingScreen({
+    super.key,
+    this.setupMode = false,
+    this.includeClasses = true,
+    this.timesOnly = false,
+    this.canSkip = false,
+    this.partLabel,
+  });
+
+  /// Health-form journey: "Part 2 of 2 · Your health" above the steps.
+  final String? partLabel;
+
+  /// Profile setup for existing clients (not a trial): same screens, but
+  /// finishing just saves and closes (no trial start, no AI plan).
+  /// Opened by ProfileSetupGate. Returns `true` when she completed it.
+  final bool setupMode;
+
+  /// Show the class-times step (workout/combined clients). Diet-only
+  /// clients skip it.
+  final bool includeClasses;
+
+  /// She already filled the form; only ask for her class times.
+  final bool timesOnly;
+
+  /// Show a "Later" button (she has skips left).
+  final bool canSkip;
 
   @override
   State<TrialOnboardingScreen> createState() => _TrialOnboardingScreenState();
@@ -47,6 +102,16 @@ const _kAccent = Color(0xFF6DC55A);
 const _kAccentBg = Color(0xFFEAF7E4);
 const _kBorder = Color(0xFFD8EDD4);
 const _kHero2 = Color(0xFF24502F);
+
+/// Quick picks for the health step (shared with the paid form).
+const kAllergyOptions = <String>[
+  'Peanuts', 'Tree nuts', 'Dairy / lactose', 'Gluten / wheat',
+  'Eggs', 'Fish', 'Shellfish', 'Soy',
+];
+const kConditionOptions = <String>[
+  'PCOS', 'Thyroid', 'Diabetes', 'Insulin resistance', 'High BP',
+  'High cholesterol', 'Anemia', 'Endometriosis',
+];
 
 class _Opt {
   final String value;
@@ -119,7 +184,15 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
   bool _loading = true;
   bool _saving = false;
   bool _generating = false;
-  int _step = 0;
+  // Current screen. Saved on the phone on every change (Oct 2026), so if
+  // she closes the app halfway she comes back to the SAME screen. Her
+  // answers themselves are saved on the server after every step.
+  int _stepValue = 0;
+  int get _step => _stepValue;
+  set _step(int v) {
+    _stepValue = v;
+    if (!widget.setupMode) saveTrialOnboardingStep(v);
+  }
 
   String? _goal;
   // True when her goal already came from signup, so the "What brings you
@@ -128,6 +201,8 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
   String? _cycleStatus;
   final Set<String> _prefs = {};
   int _mealsPerDay = 4;
+  // Body step: one key per question so Next can scroll to the one she missed.
+  final _bodyQKeys = List.generate(3, (_) => GlobalKey());
   String? _fitnessLevel;
   final Set<String> _equip = {};
   // Step 5: workout styles she loves (workoutSection.favoriteWorkouts).
@@ -144,6 +219,15 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
   final List<String> _pickedTimes = [];
   // Step 6 has two screens: pick times, then see the week.
   bool _weekView = false;
+
+  // Life stage already answered at signup: show it as a summary line
+  // instead of asking again (tap "Change" to edit).
+  bool _cycleKnown = false;
+  bool _editCycle = false;
+  // Health conditions she ticked at signup (User.healthConditions).
+  String _signupConditions = '';
+  // Times saved last time ("8:00 PM"), used if slot ids changed.
+  final List<String> _savedTimes = [];
 
   // Welcome preview: her current cycle phase (null if she has no cycle data).
   String? _phase;
@@ -211,12 +295,37 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
             if (id != null) _pickedSlots.add(id);
           }
         }
+        if (ws['preferredTimes'] is List) {
+          _savedTimes.addAll(
+              (ws['preferredTimes'] as List).map((e) => '$e').where((e) => e.isNotEmpty));
+        }
       }
     }
     // Goal was already chosen at signup: carry it over and skip the step.
     final fromSignup = _goalFromSignup();
     if (_goal == null && fromSignup != null) _goal = fromSignup;
     _skipGoal = fromSignup != null && _goal != null;
+    // Life stage comes from signup (same field), so don't ask it again.
+    _cycleKnown = _cycleStatus != null;
+    // One health-conditions answer: start from what she ticked at signup.
+    try {
+      final auth = Get.find<AuthController>();
+      _signupConditions = (auth.logInUser?.healthConditions ?? '').trim();
+      if (_signupConditions.isEmpty) {
+        _signupConditions = auth.healthConditions.value.trim();
+      }
+    } catch (_) {}
+    if (_medical.text.trim().isEmpty && _signupConditions.isNotEmpty) {
+      _medical.text = _signupConditions;
+    }
+    if (widget.setupMode) {
+      // No trial welcome page: straight to the form, or to class times.
+      _step = widget.timesOnly ? 6 : (_skipGoal ? 2 : 1);
+    } else {
+      // Closed the app halfway last time: open the screen she was on.
+      final saved = savedTrialOnboardingStep();
+      if (saved > 0 && saved <= _lastStep) _stepValue = saved;
+    }
     setState(() => _loading = false);
     _loadClasses();
     _loadPhase();
@@ -293,7 +402,42 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
       final ids = _classes.map((c) => c['slotId'] as int).toSet();
       _pickedSlots.removeWhere((id) => !ids.contains(id));
       _timesFromSlots();
+      _restoreOrSuggestTimes();
     });
+  }
+
+  /// No picks found by id: use the times she saved last time; if none,
+  /// pre-select up to 2 classes in the time of day she chose at signup
+  /// (morning / afternoon / evening / night). She can change them.
+  /// Time of day she chose at signup (morning / afternoon / evening /
+  /// night), or '' if none / "all".
+  String get _signupTimeBlock {
+    try {
+      final b = Get.find<AuthController>()
+              .sharedPreferences
+              .getString(Constants.timeBlock) ??
+          '';
+      return b == 'all' ? '' : b;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  void _restoreOrSuggestTimes() {
+    if (_pickedTimes.isNotEmpty) return;
+    final options = _timeOptions;
+    String n(String t) => t.trim().toUpperCase().replaceFirst(RegExp(r'^0'), '');
+    for (final saved in _savedTimes) {
+      for (final o in options) {
+        final t = '${o['time']}';
+        if (n(t) == n(saved) && !_pickedTimes.contains(t) && _pickedTimes.length < 2) {
+          _pickedTimes.add(t);
+        }
+      }
+    }
+    // Her signup "time of day" is NOT pre-selected: she picks her own free
+    // times. It only adds a "Suggested for you" tag on that part of the day.
+    if (_pickedTimes.isNotEmpty) _syncSlotsFromTimes();
   }
 
   List<Map<String, dynamic>> get _classes {
@@ -314,7 +458,29 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
         'favoriteWorkouts': _loves.toList(),
         'preferredSlotIds': _pickedSlots.toList(),
         'preferredTimes': _pickedTimes.toList(),
+        // Picking times = leaving "All classes" (if she had chosen it).
+        if (_pickedTimes.isNotEmpty) 'reminderMode': 'picked',
       };
+
+  /// Body step questions still unanswered (0 cycle, 1 allergies, 2 health).
+  List<int> get _bodyMissing => [
+        if (_cycleStatus == null) 0,
+        if (_allergies.text.trim().isEmpty) 1,
+        if (_medical.text.trim().isEmpty) 2,
+      ];
+
+  /// The cycle question is only asked when we don't know it yet.
+  bool get _cycleQuestionShown => !_cycleKnown || _editCycle || _cycleStatus == null;
+  int get _bodyTotal => _cycleQuestionShown ? 3 : 2;
+
+  /// Next tapped with answers missing: scroll to the first one.
+  void _nudgeBody() {
+    final ctx = _bodyQKeys[_bodyMissing.first].currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(ctx,
+          duration: const Duration(milliseconds: 300), alignment: 0.2);
+    }
+  }
 
   bool get _stepValid {
     switch (_step) {
@@ -369,11 +535,52 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
     }
   }
 
+  /// Review step button: start straight away when both boxes are ticked,
+  /// otherwise "One last step" (promises + Agree & start).
+  Future<void> _onReviewButton() async {
+    if (_confirmed && _consented) return _next();
+    final agreed = await showAgreeAndStartSheet(setupMode: widget.setupMode);
+    if (!mounted || !agreed) return;
+    setState(() {
+      _confirmed = true;
+      _consented = true;
+    });
+    await _next();
+  }
+
   Future<void> _next() async {
     FocusScope.of(context).unfocus();
     if (_step == _lastStep) return _finish();
     if (_step == 6 && !_weekView) {
       setState(() => _weekView = true);
+      return;
+    }
+    // Setup mode, diet-only client: no class times, go from step 5 to review.
+    if (widget.setupMode && !widget.includeClasses && _step == 5) {
+      final body = _bodyForStep(5);
+      setState(() => _saving = true);
+      final ok = body == null || await _consult.patchProfile(body);
+      if (!mounted) return;
+      setState(() => _saving = false);
+      if (!ok) {
+        CustomToast.failToast(msg: 'Could not save. Please try again.');
+        return;
+      }
+      setState(() => _step = _lastStep);
+      return;
+    }
+    // Setup mode, times only: save the picks and close.
+    if (widget.setupMode && widget.timesOnly && _step == 6) {
+      setState(() => _saving = true);
+      final ok = await _consult.patchProfile(_bodyForStep(6)!);
+      if (!mounted) return;
+      setState(() => _saving = false);
+      if (!ok) {
+        CustomToast.failToast(msg: 'Could not save. Please try again.');
+        return;
+      }
+      CustomToast.successToast(msg: 'Saved! We\'ll remind you before your classes.');
+      Get.back<bool>(result: true);
       return;
     }
     if (_step == 0 && _skipGoal) {
@@ -404,8 +611,15 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
 
   void _back() {
     FocusScope.of(context).unfocus();
+    final firstSetupStep =
+        widget.timesOnly ? 6 : (_skipGoal ? 2 : 1);
     if (_step == 6 && _weekView) {
       setState(() => _weekView = false);
+    } else if (widget.setupMode && _step <= firstSetupStep) {
+      // First page of setup: back = "Later" if allowed, else stay.
+      if (widget.canSkip) Get.back<bool>(result: false);
+    } else if (widget.setupMode && !widget.includeClasses && _step == _lastStep) {
+      setState(() => _step = 5);
     } else if (_step > 0) {
       setState(() => _step = (_step == 2 && _skipGoal) ? 0 : _step - 1);
     } else {
@@ -422,6 +636,26 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
   }
 
   Future<void> _finish() async {
+    if (widget.setupMode) {
+      setState(() => _saving = true);
+      final ok = await _consult.patchProfile({
+        'isComplete': true,
+        'healthConsent': true,
+        'consentVersion': _kConsentVersion,
+        // She reviewed and confirmed: counts as her real health form
+        // (also for answers carried over from her free trial).
+        'confirmed': true,
+      });
+      if (!mounted) return;
+      setState(() => _saving = false);
+      if (!ok) {
+        CustomToast.failToast(msg: 'Could not save. Please try again.');
+        return;
+      }
+      CustomToast.successToast(msg: 'All set, thank you!');
+      Get.back<bool>(result: true);
+      return;
+    }
     setState(() => _generating = true);
     _busyIdx = 0;
     _busyTimer?.cancel();
@@ -439,6 +673,8 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
     // Starting is idempotent: returns her existing journey if she already
     // has one. The 3-day clock only starts here, after the form.
     final started = saved && await _home.startTrial();
+    // The server waits at most 6 s for the AI plan (the "making your
+    // plan" screen stays up meanwhile), then lets her move on.
     final planned = started && await _home.submitTrialQuickIntake();
 
     _busyTimer?.cancel();
@@ -448,8 +684,19 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
       if (!saved) CustomToast.failToast(msg: 'Could not save. Please try again.');
       return;
     }
+    // Form done: nothing to resume any more.
+    clearTrialOnboardingStep();
     // Only now is the trial switched on for this device.
     Get.find<AuthController>().activateTrial();
+    if (_home.trialPlanPending.value) {
+      // Plan still being made: she uses the app meanwhile; one push
+      // ("Your starter plan is ready 🌱") when it's done.
+      Get.offAll<void>(() => BottomBarScreen(index: 0));
+      CustomToast.successToast(
+        msg: "Your plan will be shared soon. We'll send you a notification when it's ready.",
+      );
+      return;
+    }
     Get.offAll<void>(() => const TrialMealPlanScreen());
   }
 
@@ -467,6 +714,10 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
     return WillPopScope(
       onWillPop: () async {
         if (_generating) return false;
+        if (widget.setupMode) {
+          _back();
+          return false;
+        }
         if (_step > 0) {
           _back();
           return false;
@@ -514,6 +765,22 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
                     Column(
                       children: [
                         if (_step > 0) _topBar(),
+                        if (_step > 0 && widget.partLabel != null)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(62, 4, 20, 0),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                              widget.partLabel!,
+                              style: const TextStyle(
+                                fontFamily: 'Poppins',
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: _kAccent,
+                              ),
+                            ),
+                            ),
+                          ),
                         Expanded(
                           child: AnimatedSwitcher(
                             duration: const Duration(milliseconds: 280),
@@ -572,7 +839,9 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Row(
+            child: (widget.setupMode && widget.timesOnly)
+                ? const SizedBox.shrink()
+                : Row(
               children: List.generate(_shownTotal, (i) {
                 final on = i < _shownStep;
                 return Expanded(
@@ -590,15 +859,35 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          Text(
-            '$_shownStep of $_shownTotal',
-            style: const TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: _kInkSoft,
+          if (!(widget.setupMode && widget.timesOnly))
+            Text(
+              '$_shownStep of $_shownTotal',
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: _kInkSoft,
+              ),
             ),
-          ),
+          if (widget.setupMode && widget.canSkip) ...[
+            const SizedBox(width: 8),
+            InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () => Get.back<bool>(result: false),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Text(
+                  'Later',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _kInkSoft,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -608,7 +897,7 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
     final label = _step == 0
         ? 'Build my plan  →'
         : _step == _lastStep
-            ? 'Start my free trial'
+            ? (widget.setupMode ? 'Save my answers' : 'Start my free trial')
             : (_step == 5 && _loves.isEmpty)
                 ? 'Pick at least one  →'
                 : _step == 6
@@ -616,9 +905,18 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
                         ? 'Pick a time  →'
                         : !_weekView
                             ? 'See my week  →'
-                            : 'Remind me at ${_pickedTimes.join(' & ')}  →')
-                    : 'Continue';
-    final enabled = _stepValid && !_saving && !_generating;
+                            : (widget.setupMode && widget.timesOnly)
+                                ? 'Save · remind me at ${_pickedTimes.join(' & ')}'
+                                : 'Remind me at ${_pickedTimes.join(' & ')}  →')
+                    : (_step == 2 && _bodyMissing.isNotEmpty)
+                        ? '${_bodyTotal - _bodyMissing.length} of $_bodyTotal answered · Next →'
+                        : 'Continue';
+    // Review step: always green (Oct 2026). Without both ticks a tap opens
+    // "One last step" with the promises and "Agree & start".
+    final reviewStep = _step == _lastStep;
+    final bodyNudge = _step == 2 && _bodyMissing.isNotEmpty;
+    final enabled =
+        (reviewStep || bodyNudge || _stepValid) && !_saving && !_generating;
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
       decoration: BoxDecoration(
@@ -639,7 +937,13 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
             width: double.infinity,
             height: 54,
             child: ElevatedButton(
-              onPressed: enabled ? _next : null,
+              onPressed: enabled
+                  ? (reviewStep
+                      ? _onReviewButton
+                      : bodyNudge
+                          ? _nudgeBody
+                          : _next)
+                  : null,
               style: ElevatedButton.styleFrom(
                 backgroundColor: _kAccent,
                 disabledBackgroundColor: _kAccent.withOpacity(0.35),
@@ -1087,38 +1391,93 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const _StepHeader(
-          title: 'Your body & cycle',
-          sub: 'This keeps your plan safe and in tune with your cycle.',
+        _StepHeader(
+          title: _cycleQuestionShown ? 'Your body & cycle' : 'Your health',
+          sub: 'Keeps your plan safe.',
         ),
-        const _PrivacyCard(),
-        const SizedBox(height: 20),
-        const _Label('Where are you in your cycle?'),
-        const _Hint('So your meals match your cycle phase.'),
-        _ChipGrid(
-          opts: _cycle,
-          isOn: (v) => _cycleStatus == v,
-          onTap: (v) => setState(() => _cycleStatus = v),
+        // Oct 2026 (shorter page): one privacy line instead of the card.
+        Transform.translate(
+          offset: const Offset(0, -12),
+          child: const Text(
+            '🔒 Private to you and your Fit Her team',
+            style: TextStyle(fontFamily: 'Poppins', fontSize: 13.5, color: _kInkSoft),
+          ),
         ),
-        const SizedBox(height: 22),
-        const _Label('Any food allergies?'),
+        const SizedBox(height: 6),
+        // Cycle: hidden when she already told us (sign-up life stage);
+        // she can still change it on the review step.
+        if (_cycleQuestionShown) ...[
+          _Label('Where are you in your cycle?', key: _bodyQKeys[0]),
+          const _Hint('So your meals match your cycle phase.'),
+          _ChipGrid(
+            opts: _cycle,
+            isOn: (v) => _cycleStatus == v,
+            onTap: (v) => setState(() => _cycleStatus = v),
+          ),
+          const SizedBox(height: 22),
+        ],
+        _Label('Any food allergies?', key: _bodyQKeys[1]),
         const _Hint("So we never add something you can't eat."),
         _InputWithNone(
           controller: _allergies,
-          hint: 'e.g. peanuts, shellfish',
+          hint: 'Something else? Type it here',
           noneLabel: 'No allergies',
+          options: kAllergyOptions,
           onChanged: () => setState(() {}),
         ),
         const SizedBox(height: 22),
-        const _Label('Any health conditions?'),
-        const _Hint("So we never suggest something that isn't right for you."),
+        _Label('Any health conditions?', key: _bodyQKeys[2]),
+        _Hint(_signupConditions.isNotEmpty
+            ? 'From your signup. Add anything else, or edit.'
+            : "So we never suggest something that isn't right for you."),
         _InputWithNone(
           controller: _medical,
-          hint: 'e.g. thyroid, diabetes, high BP',
+          hint: 'Something else? Type it here',
           noneLabel: 'None',
+          options: kConditionOptions,
           onChanged: () => setState(() {}),
         ),
       ],
+    );
+  }
+
+  /// An answer she already gave at signup, with a small "Change" link.
+  Widget _knownAnswer(String text, VoidCallback onChange) {
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: _kAccentBg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _kBorder),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: _kInk,
+              ),
+            ),
+          ),
+          GestureDetector(
+            onTap: onChange,
+            child: const Text(
+              'Change',
+              style: TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: _kAccent,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1713,7 +2072,7 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
   Widget _timeScreen() {
     final options = _timeOptions;
 
-    Widget slot(String tag, String? time) => Container(
+    Widget slot(String tag, String? time, {String empty = 'Pick'}) => Container(
           padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
           decoration: BoxDecoration(
             color: time == null ? const Color(0xFFF6F8F5) : _kAccentBg,
@@ -1726,7 +2085,7 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
                 style: const TextStyle(fontSize: 10.5, color: _kInkSoft),
               ),
               TextSpan(
-                text: time ?? 'Pick',
+                text: time ?? empty,
                 style: TextStyle(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
@@ -1762,6 +2121,14 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
                   text: '   $range',
                   style: const TextStyle(fontSize: 11.5, color: _kInkSoft),
                 ),
+                if (entry.key == _signupTimeBlock)
+                  const TextSpan(
+                    text: '   ·  Suggested for you',
+                    style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: _kAccent),
+                  ),
               ]),
               style: const TextStyle(fontFamily: 'Poppins'),
             ),
@@ -1874,7 +2241,16 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
         _stepBadge('Your time'),
         const SizedBox(height: 12),
         _twoToneTitle('Tell us when ', "you're free"),
-        _subLine("Pick 2 times and we'll remind you before class."),
+        _subLine("Pick 1 or 2 times and we'll remind you before class."),
+        if (widget.setupMode) ...[
+          const SizedBox(height: 6),
+          const Text(
+            'Fewer, calmer notifications. Prefer a reminder for every class? '
+            'Switch to "All classes" anytime in Settings › Notifications.',
+            style: TextStyle(
+                fontFamily: 'Poppins', fontSize: 11.5, height: 1.4, color: _kInkSoft),
+          ),
+        ],
         const SizedBox(height: 16),
         Container(
           padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
@@ -1906,7 +2282,7 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
               ),
               slot('1st', _pickedTimes.isNotEmpty ? _pickedTimes[0] : null),
               const SizedBox(width: 6),
-              slot('2nd', _pickedTimes.length > 1 ? _pickedTimes[1] : null),
+              slot('2nd', _pickedTimes.length > 1 ? _pickedTimes[1] : null, empty: 'optional'),
             ],
           ),
         ),
@@ -2331,7 +2707,7 @@ class _StepHeader extends StatelessWidget {
             title,
             style: const TextStyle(
               fontFamily: 'Poppins',
-              fontSize: 24,
+              fontSize: 27,
               fontWeight: FontWeight.w800,
               color: _kInk,
               letterSpacing: -0.4,
@@ -2342,7 +2718,7 @@ class _StepHeader extends StatelessWidget {
             sub,
             style: const TextStyle(
               fontFamily: 'Poppins',
-              fontSize: 13.5,
+              fontSize: 15,
               height: 1.5,
               color: _kInkSoft,
             ),
@@ -2355,7 +2731,7 @@ class _StepHeader extends StatelessWidget {
 
 class _Label extends StatelessWidget {
   final String text;
-  const _Label(this.text);
+  const _Label(this.text, {super.key});
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
@@ -2363,7 +2739,7 @@ class _Label extends StatelessWidget {
           text,
           style: const TextStyle(
             fontFamily: 'Poppins',
-            fontSize: 13.5,
+            fontSize: 16,
             fontWeight: FontWeight.w700,
             color: _kInk,
           ),
@@ -2639,49 +3015,116 @@ class _Input extends StatelessWidget {
 
 /// Text field plus a one-tap "None" chip, so she never has to type
 /// "none" herself on a required question.
-class _InputWithNone extends StatelessWidget {
+class _InputWithNone extends StatefulWidget {
   final TextEditingController controller;
   final String hint;
   final String noneLabel;
   final VoidCallback onChanged;
+  /// Quick picks (e.g. "Peanuts"). Tapping adds/removes it in the text
+  /// box as a comma list; she can still type anything else.
+  final List<String> options;
   const _InputWithNone({
     required this.controller,
     required this.hint,
     required this.noneLabel,
     required this.onChanged,
+    this.options = const [],
   });
+
+  @override
+  State<_InputWithNone> createState() => _InputWithNoneState();
+}
+
+/// Oct 2026 (shorter page): chips, "None" and "+ Other" in one wrap; the
+/// text box only opens from "+ Other" (or when she already typed her own).
+class _InputWithNoneState extends State<_InputWithNone> {
+  bool _other = false;
+
+  TextEditingController get controller => widget.controller;
+
+  List<String> get _items => controller.text
+      .split(',')
+      .map((e) => e.trim())
+      .where((e) => e.isNotEmpty && e.toLowerCase() != 'none')
+      .toList();
+
+  bool _has(String o) => _items.any((e) => e.toLowerCase() == o.toLowerCase());
+
+  bool get _hasCustom => _items.any(
+      (e) => !widget.options.any((o) => o.toLowerCase() == e.toLowerCase()));
+
+  void _toggle(String o) {
+    final items = _items;
+    final i = items.indexWhere((e) => e.toLowerCase() == o.toLowerCase());
+    if (i >= 0) {
+      items.removeAt(i);
+    } else {
+      items.add(o);
+    }
+    controller.text = items.join(', ');
+    controller.selection = TextSelection.collapsed(offset: controller.text.length);
+    widget.onChanged();
+  }
+
+  Widget _chip(String text, {required bool on, required VoidCallback onTap, bool dark = false}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        decoration: BoxDecoration(
+          color: on ? (dark ? _kInk : _kAccentBg) : Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: on ? (dark ? _kInk : _kAccent) : _kBorder,
+            width: on && !dark ? 1.5 : 1,
+          ),
+        ),
+        child: Text(
+          text,
+          style: TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 14.5,
+            fontWeight: FontWeight.w600,
+            color: on && dark ? Colors.white : _kInk,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isNone = controller.text.trim().toLowerCase() == 'none';
+    final showBox = !isNone && (_other || _hasCustom || widget.options.isEmpty);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        GestureDetector(
-          onTap: () {
-            controller.text = isNone ? '' : 'None';
-            onChanged();
-          },
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            margin: const EdgeInsets.only(bottom: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-            decoration: BoxDecoration(
-              color: isNone ? _kInk : Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: isNone ? _kInk : _kBorder),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (!isNone)
+              for (final o in widget.options)
+                _chip(_has(o) ? '✓  $o' : o, on: _has(o), onTap: () => _toggle(o)),
+            _chip(
+              '✓  ${widget.noneLabel}',
+              on: isNone,
+              dark: true,
+              onTap: () {
+                controller.text = isNone ? '' : 'None';
+                setState(() => _other = false);
+                widget.onChanged();
+              },
             ),
-            child: Text(
-              '✓  $noneLabel',
-              style: TextStyle(
-                fontFamily: 'Poppins',
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: isNone ? Colors.white : _kInk,
-              ),
-            ),
-          ),
+            if (!isNone && widget.options.isNotEmpty && !showBox)
+              _chip('+ Other', on: false, onTap: () => setState(() => _other = true)),
+          ],
         ),
-        if (!isNone) _Input(controller: controller, hint: hint, onChanged: onChanged),
+        if (showBox) ...[
+          const SizedBox(height: 8),
+          _Input(controller: controller, hint: widget.hint, onChanged: widget.onChanged),
+        ],
       ],
     );
   }
@@ -3068,6 +3511,158 @@ class TrialClassRulesCard extends StatelessWidget {
 // Final copy agreed for the trial (see docs/FitHer_Free_Trial_Flow_Final.md
 // section 6). Every promise here must stay exactly true.
 
+/// The four safe-space promises (same words everywhere they show).
+List<Widget> safeSpacePromises() => [
+      _safePromise('👩', 'Women only. ',
+          'All trainers are women, and every class is women-only.'),
+      _safePromise('🔒', 'Your health info stays private. ',
+          "We use it only to build your plan and keep you safe. It's never shared, sold, or used for anything else."),
+      _safePromise('📵', 'Classes are never recorded. ',
+          'What happens in class stays in class.'),
+      _safePromise('📷', 'Your camera, your choice. ',
+          'Turn it on for form tips, or keep it off and follow along.'),
+    ];
+
+Widget _safePromise(String emoji, String bold, String rest) => Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _kAccentBg,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(emoji, style: const TextStyle(fontSize: 18)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text.rich(
+              TextSpan(children: [
+                TextSpan(text: bold, style: const TextStyle(fontWeight: FontWeight.w700)),
+                TextSpan(text: rest),
+              ]),
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 13,
+                height: 1.45,
+                color: _kInk,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+/// "One last step" (Oct 2026): opens when she taps "Start my free trial"
+/// without both ticks. Shows the safe-space promises in full (she reads
+/// what we promise) and ONE clear choice: "Agree & start". Never closes
+/// by itself. Returns true when she agreed.
+Future<bool> showAgreeAndStartSheet({bool setupMode = false}) async {
+  final agreed = await Get.bottomSheet<bool>(
+    Container(
+      padding: const EdgeInsets.fromLTRB(22, 18, 22, 8),
+      decoration: const BoxDecoration(
+        color: _kBg,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDADFD5),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              const Text(
+                'One last step 💚',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: _kInk,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'This is your safe space. Here is what we promise you:',
+                style: TextStyle(fontFamily: 'Poppins', fontSize: 13, color: _kInkSoft, height: 1.4),
+              ),
+              const SizedBox(height: 14),
+              ...safeSpacePromises(),
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _kAccent.withOpacity(0.35)),
+                ),
+                child: const Text.rich(
+                  TextSpan(children: [
+                    TextSpan(text: 'By tapping below you confirm '),
+                    TextSpan(text: 'your answers are correct', style: TextStyle(fontWeight: FontWeight.w700)),
+                    TextSpan(text: ' and you agree that Fit Her uses your health info '),
+                    TextSpan(
+                      text: 'only to create your plan and keep your classes safe.',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ]),
+                  style: TextStyle(fontFamily: 'Poppins', fontSize: 12.5, height: 1.45, color: _kInk),
+                ),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                height: 54,
+                child: ElevatedButton(
+                  onPressed: () => Get.back<bool>(result: true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _kAccent,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  child: Text(
+                    setupMode ? 'Agree & save my answers' : 'Agree & start my free trial',
+                    style: const TextStyle(fontFamily: 'Poppins', fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Get.back<bool>(result: false),
+                child: const Text(
+                  'Go back and check my answers',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w600,
+                    color: _kInkSoft,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+    isScrollControlled: true,
+  );
+  return agreed == true;
+}
+
 /// "Your safe space": the four promises. Opened from the welcome trust
 /// strip and the "Read more" link on the consent tick.
 Future<void> showSafeSpaceSheet() {
@@ -3261,7 +3856,7 @@ class _Hint extends StatelessWidget {
         padding: const EdgeInsets.only(top: 0, bottom: 10),
         child: Text(
           '💡 $text',
-          style: const TextStyle(fontFamily: 'Poppins', fontSize: 11.5, color: _kInkSoft),
+          style: const TextStyle(fontFamily: 'Poppins', fontSize: 13, color: _kInkSoft),
         ),
       );
 }
@@ -3910,6 +4505,8 @@ class _WelcomeComingUp extends StatelessWidget {
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text('Day $d',
                         style: const TextStyle(
@@ -3920,6 +4517,7 @@ class _WelcomeComingUp extends StatelessWidget {
                         )),
                     Text(label(d),
                         maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontFamily: 'Poppins',
                           fontSize: 10,
@@ -3944,8 +4542,10 @@ class _WelcomeComingUp extends StatelessWidget {
         ],
       );
     }
+    // Longer trials scroll sideways. Tall enough for a 2-line label
+    // (it overflowed by 7 px at 58).
     return SizedBox(
-      height: 58,
+      height: 68,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: tiles.length,

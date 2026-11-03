@@ -13,6 +13,7 @@
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../data/models/progress_v2/measurement_entry.dart';
 import '../data/models/progress_v2/progress_models.dart';
 
 class ProgressReportPdfBuilder {
@@ -36,6 +37,7 @@ class ProgressReportPdfBuilder {
     required SymptomsData symptoms,
     required InsightsHubData insights,
     String? userFullName,
+    List<MeasurementEntry> measurements = const [],
   }) {
     final doc = pw.Document();
     doc.addPage(pw.MultiPage(
@@ -47,6 +49,7 @@ class ProgressReportPdfBuilder {
         hydration: hydration,
         insights: insights,
         userFullName: userFullName,
+        measurements: measurements,
       ),
     ));
     doc.addPage(pw.MultiPage(
@@ -65,11 +68,12 @@ class ProgressReportPdfBuilder {
     required HydrationData hydration,
     required InsightsHubData insights,
     String? userFullName,
+    List<MeasurementEntry> measurements = const [],
   }) {
     final periodLabel = _formatPeriodLabel(summary.window.period);
     final headerName = userFullName ?? summary.user?.firstName ?? 'Patient';
     final periodLine = (summary.window.periodStart != null && summary.window.periodEnd != null)
-        ? '${summary.window.periodStart}  →  ${summary.window.periodEnd}'
+        ? '${summary.window.periodStart}  to  ${summary.window.periodEnd}'
         : periodLabel;
 
     return [
@@ -80,39 +84,42 @@ class ProgressReportPdfBuilder {
 
       _sectionTitle('Cycle context'),
       _kvRow([
-        ['Phase', summary.cycle?.phase ?? '—'],
-        ['Cycle day', '${summary.cycle?.cycleDay ?? '—'}'],
-        ['Avg cycle length', '${summary.cycle?.averageCycleLength ?? '—'} days'],
+        ['Phase', summary.cycle?.phase ?? '-'],
+        ['Cycle day', '${summary.cycle?.cycleDay ?? '-'}'],
+        ['Avg cycle length', '${summary.cycle?.averageCycleLength ?? '-'} days'],
       ]),
       pw.SizedBox(height: 14),
 
       _sectionTitle('Goal & pace'),
       _kvRow([
-        ['Goal', summary.goal?.label ?? '—'],
-        ['Status', summary.goal?.paceStatus ?? '—'],
+        ['Goal', summary.goal?.label ?? '-'],
+        ['Status', summary.goal?.paceStatus ?? '-'],
         if ((summary.goal?.paceMessage ?? '').isNotEmpty)
           ['Pace', summary.goal!.paceMessage!],
-        ['Current Δ', _formatKg(summary.goal?.currentDeltaKg)],
-        ['Target Δ', _formatKg(summary.goal?.targetDeltaKg)],
+        ['Current change', _formatKg(summary.goal?.currentDeltaKg)],
+        ['Target change', _formatKg(summary.goal?.targetDeltaKg)],
       ]),
       pw.SizedBox(height: 14),
 
       _sectionTitle('Weight'),
       _kvRow([
-        ['Current', _formatKg(weight.currentWeightKg, suffixKg: true)],
+        ['Current', weight.currentWeightKg == null ? '-' : '${weight.currentWeightKg!.toStringAsFixed(1)} kg'],
         ['Period delta', _formatKg(weight.deltaKg, suffixKg: true)],
-        ['Direction', weight.direction ?? '—'],
+        ['Direction', weight.direction ?? '-'],
         ['Datapoints', '${weight.history.length}'],
       ]),
       pw.SizedBox(height: 14),
 
+      // Weekly check-in measurements (Oct 2026).
+      ..._measurementsSection(measurements),
+
       _sectionTitle('Hydration'),
       _kvRow([
-        ['Average', '${hydration.averageL?.toStringAsFixed(1) ?? '—'} L / day'],
-        ['Target', '${hydration.targetL?.toStringAsFixed(1) ?? '—'} L'],
+        ['Average', '${hydration.averageL?.toStringAsFixed(1) ?? '-'} L / day'],
+        ['Target', '${hydration.targetL?.toStringAsFixed(1) ?? '-'} L'],
         ['Days logged', '${hydration.daysLogged ?? 0}'],
         if ((hydration.phaseTip?.tip ?? '').isNotEmpty)
-          ['Phase tip', hydration.phaseTip!.tip!],
+          ['Phase tip', _c(hydration.phaseTip!.tip)],
       ]),
       pw.SizedBox(height: 14),
 
@@ -120,33 +127,33 @@ class ProgressReportPdfBuilder {
       _kvRow([
         ['Classes attended', '${summary.stats?.classesAttended ?? 0}'],
         ['Streak', '${summary.stats?.streakDays ?? 0} days'],
-        ['Avg sleep', '${summary.stats?.avgSleepHours?.toStringAsFixed(1) ?? '—'} h'],
-        ['Avg energy', '${summary.stats?.avgEnergyScore?.toStringAsFixed(1) ?? '—'} / 10'],
+        ['Avg sleep', '${summary.stats?.avgSleepHours?.toStringAsFixed(1) ?? '-'} h'],
+        ['Avg energy', '${summary.stats?.avgEnergyScore?.toStringAsFixed(1) ?? '-'} / 10'],
       ]),
       pw.SizedBox(height: 18),
 
       _sectionTitle('Top patterns this period'),
       if (insights.insights.isEmpty)
-        pw.Text('No patterns yet — collecting data.',
+        pw.Text('No patterns yet - collecting data.',
             style: pw.TextStyle(fontSize: 10, color: textMuted)),
       ...insights.insights.take(3).map((i) => pw.Padding(
             padding: const pw.EdgeInsets.only(bottom: 8),
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                pw.Text(i.headline ?? '',
+                pw.Text(_c(i.headline),
                     style: pw.TextStyle(
                       fontSize: 11,
                       fontWeight: pw.FontWeight.bold,
                       color: textPrimary,
                     )),
                 if ((i.subtitle ?? '').isNotEmpty)
-                  pw.Text(i.subtitle!,
+                  pw.Text(_c(i.subtitle),
                       style: pw.TextStyle(fontSize: 9, color: textMuted)),
                 if ((i.body ?? '').isNotEmpty)
                   pw.Padding(
                     padding: const pw.EdgeInsets.only(top: 4),
-                    child: pw.Text(i.body!,
+                    child: pw.Text(_c(i.body),
                         style: pw.TextStyle(fontSize: 10, color: textPrimary)),
                   ),
               ],
@@ -161,7 +168,7 @@ class ProgressReportPdfBuilder {
             color: PdfColor.fromInt(0xFFEDF5EA),
             borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
           ),
-          child: pw.Text(insights.honestyBanner!,
+          child: pw.Text(_c(insights.honestyBanner),
               style: pw.TextStyle(fontSize: 9, color: textMuted)),
         ),
       ],
@@ -171,7 +178,7 @@ class ProgressReportPdfBuilder {
   // ───────── Page 2: symptom log ─────────────────────────────────────────
 
   List<pw.Widget> buildPage2({required SymptomsData symptoms}) {
-    final headers = ['Symptom', 'Intensity', 'Δ vs prev period', 'Direction', 'Datapoints'];
+    final headers = ['Symptom', 'Intensity', 'Change vs prev period', 'Direction', 'Datapoints'];
 
     return [
       pw.Text('Symptom report',
@@ -205,11 +212,11 @@ class ProgressReportPdfBuilder {
                 .toList(),
           ),
           ...symptoms.symptoms.map((s) {
-            final intensity = s.intensityPct == null ? '—' : '${s.intensityPct}%';
+            final intensity = s.intensityPct == null ? '-' : '${s.intensityPct}%';
             final delta = s.deltaPct == null
-                ? '—'
+                ? '-'
                 : '${s.deltaPct! > 0 ? '+' : ''}${s.deltaPct}%';
-            final direction = s.direction ?? (s.notEnoughData ? 'not enough data' : '—');
+            final direction = s.direction ?? (s.notEnoughData ? 'not enough data' : '-');
             return pw.TableRow(
               children: [
                 _td(s.label),
@@ -227,7 +234,7 @@ class ProgressReportPdfBuilder {
       _sectionTitle('Notes for clinician'),
       pw.Text(
         'This report summarises self-reported symptom check-ins for the '
-        'period above. Severity is on a 0-10 scale; "Δ vs prev period" '
+        'period above. Severity is on a 0-10 scale; "Change vs prev period" '
         'compares the current period\'s mean to the immediately preceding '
         'period of equal length. "Not enough data" indicates fewer than 5 '
         'logged datapoints in either window.',
@@ -236,7 +243,119 @@ class ProgressReportPdfBuilder {
     ];
   }
 
+  // ───────── Body measurements (weekly check-in) ─────────────────────────
+
+  static const _measures = <List<String>>[
+    ['waistCm', 'Waist'],
+    ['hipsCm', 'Hips'],
+    ['chestCm', 'Chest'],
+    ['armsCm', 'Arms'],
+    ['thighsCm', 'Thighs'],
+  ];
+  static const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  static const _feel = {1: 'Hard', 2: 'Okay', 3: 'Good', 4: 'Great'};
+
+  // Plain "-" for empty cells: the PDF's built-in font has no long dash.
+  String _num(double? v, String unit) {
+    if (v == null) return '-';
+    final t = v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
+    return unit.isEmpty ? t : '$t $unit';
+  }
+
+  String _date(DateTime? d) {
+    if (d == null) return '-';
+    final l = d.toLocal();
+    return '${l.day} ${_months[l.month - 1]} ${l.year}';
+  }
+
+  /// "Body measurements": first vs latest for each measure, then the last
+  /// 8 entries. Oldest-first list in, as the history endpoint sends it.
+  List<pw.Widget> _measurementsSection(List<MeasurementEntry> entries) {
+    final summaryRows = <pw.TableRow>[];
+    for (final m in _measures) {
+      final withValue = entries.where((e) => e.cm(m[0]) != null).toList();
+      if (withValue.isEmpty) continue;
+      final first = withValue.first.cm(m[0])!;
+      final last = withValue.last.cm(m[0])!;
+      final diff = last - first;
+      final change = withValue.length < 2
+          ? 'first entry'
+          : (diff.abs() < 0.05 ? 'no change' : '${diff > 0 ? '+' : '-'}${_num(diff.abs(), 'cm')}');
+      summaryRows.add(pw.TableRow(children: [
+        _td(m[1]),
+        _td('${_num(first, 'cm')}  (${_date(withValue.first.date)})'),
+        _td('${_num(last, 'cm')}  (${_date(withValue.last.date)})'),
+        _td(change),
+      ]));
+    }
+
+    pw.TableRow head(List<String> cells) => pw.TableRow(
+          decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFEDF5EA)),
+          children: cells
+              .map((h) => pw.Padding(
+                    padding: const pw.EdgeInsets.all(6),
+                    child: pw.Text(h, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+                  ))
+              .toList(),
+        );
+
+    final recent = entries.reversed.take(8).toList();
+    return [
+      _sectionTitle('Body measurements'),
+      if (summaryRows.isEmpty)
+        pw.Text('No body measurements logged yet.', style: pw.TextStyle(fontSize: 10, color: textMuted))
+      else
+        pw.Table(
+          border: pw.TableBorder.all(color: borderColor),
+          columnWidths: const {
+            0: pw.FlexColumnWidth(1.2),
+            1: pw.FlexColumnWidth(2.2),
+            2: pw.FlexColumnWidth(2.2),
+            3: pw.FlexColumnWidth(1.4),
+          },
+          children: [head(['Measure', 'First', 'Latest', 'Change']), ...summaryRows],
+        ),
+      if (recent.isNotEmpty) ...[
+        pw.SizedBox(height: 10),
+        pw.Text('Recent check-ins', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: textPrimary)),
+        pw.SizedBox(height: 4),
+        pw.Table(
+          border: pw.TableBorder.all(color: borderColor),
+          children: [
+            head(['Date', 'Weight', 'Waist', 'Hips', 'Chest', 'Arms', 'Thighs', 'Week']),
+            ...recent.map((e) => pw.TableRow(children: [
+                  _td(_date(e.date)),
+                  _td(_num(e.weightKg, 'kg')),
+                  _td(_num(e.waistCm, '')),
+                  _td(_num(e.hipsCm, '')),
+                  _td(_num(e.chestCm, '')),
+                  _td(_num(e.armsCm, '')),
+                  _td(_num(e.thighsCm, '')),
+                  _td(_feel[e.weekRating] ?? '-'),
+                ])),
+          ],
+        ),
+        pw.SizedBox(height: 4),
+        pw.Text('Measurements in cm. "Week" is how she rated the week in her check-in.',
+            style: pw.TextStyle(fontSize: 8, color: textMuted)),
+      ],
+      pw.SizedBox(height: 14),
+    ];
+  }
+
   // ───────── shared widget helpers ───────────────────────────────────────
+
+  /// Text from the server (tips, insights) can hold characters the PDF's
+  /// built-in font can't draw (they showed as empty boxes): swap them.
+  String _c(String? t) => (t ?? '')
+      .replaceAll('\u2014', '-')
+      .replaceAll('\u2013', '-')
+      .replaceAll('\u2192', 'to')
+      .replaceAll('\u0394', 'change ')
+      .replaceAll('\u2019', "'")
+      .replaceAll('\u2018', "'")
+      .replaceAll('\u201C', '"')
+      .replaceAll('\u201D', '"');
 
   pw.Widget _header({required String name, required String periodLabel}) {
     return pw.Row(
@@ -341,7 +460,7 @@ class ProgressReportPdfBuilder {
   }
 
   String _formatKg(double? kg, {bool suffixKg = false}) {
-    if (kg == null) return '—';
+    if (kg == null) return '-';
     final sign = kg > 0 ? '+' : '';
     final abs = kg.abs().toStringAsFixed(1);
     final prefix = kg < 0 ? '-' : sign;

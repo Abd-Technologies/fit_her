@@ -12,9 +12,11 @@ class MeasurementInput extends StatelessWidget {
   final double? previousValue;
   final FocusNode? focusNode;
 
-  static const Color _bg = Color(0xFFF5FDF2);
-  static const Color _border = Color(0xFFC8DEC4);
+  // Same look as the Log measurements screen.
+  static const Color _bg = Color(0xFFF6FBF3);
+  static const Color _border = Color(0xFFEFF4EC);
   static const Color _label = Color(0xFF7A8C78);
+  static const Color _ink = Color(0xFF1A3A22);
   static const Color _value = Color(0xFF1A3A22);
   static const Color _previous = Color(0xFF9AB09A);
 
@@ -36,19 +38,18 @@ class MeasurementInput extends StatelessWidget {
           label,
           style: const TextStyle(
             fontFamily: 'Poppins',
-            fontSize: 12,
+            fontSize: 11,
             fontWeight: FontWeight.w600,
-            color: _label,
-            letterSpacing: 0.4,
+            color: _ink,
           ),
         ),
         const SizedBox(height: 6),
         Container(
-          height: 56,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
             color: _bg,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(color: _border),
           ),
           child: Row(
@@ -67,13 +68,13 @@ class MeasurementInput extends StatelessWidget {
                     hintText: '—',
                     hintStyle: TextStyle(
                       fontFamily: 'Poppins',
-                      fontSize: 18,
-                      color: _previous,
+                      fontSize: 12,
+                      color: _label,
                     ),
                   ),
                   style: const TextStyle(
                     fontFamily: 'Poppins',
-                    fontSize: 18,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
                     color: _value,
                   ),
@@ -83,8 +84,8 @@ class MeasurementInput extends StatelessWidget {
                 unit,
                 style: const TextStyle(
                   fontFamily: 'Poppins',
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
                   color: _label,
                 ),
               ),

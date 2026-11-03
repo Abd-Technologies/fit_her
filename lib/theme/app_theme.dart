@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'app_colors.dart';
 import 'app_typography.dart';
+import '../widgets/anim/fh_page_transition.dart';
 
 /// Fit Her Design System — App Theme
 ///
@@ -37,6 +38,12 @@ class AppTheme {
 
     return baseTheme.copyWith(
       scaffoldBackgroundColor: AppColors.background,
+      // Same soft fade-and-slide for Navigator.push screens (Android).
+      // iOS keeps its native swipe-back transition.
+      pageTransitionsTheme: const PageTransitionsTheme(builders: {
+        TargetPlatform.android: FhPageTransitionsBuilder(),
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+      }),
 
       // ─── Icons ──────────────────────────────────────────
       iconTheme: const IconThemeData(
@@ -87,6 +94,16 @@ class AppTheme {
         thumbColor: MaterialStateProperty.all(AppColors.blue),
         radius: const Radius.circular(10),
         minThumbLength: 10,
+      ),
+
+      // ─── Tabs ───────────────────────────────────────────
+      // Oct 2026: a TabBar without its own label style took titleSmall
+      // from the text theme below, which is 8 px. The text theme itself is
+      // left as it is (69 + 20 screens use titleLarge/Medium/Small and
+      // expect those sizes); tabs get a readable size here instead.
+      tabBarTheme: TabBarThemeData(
+        labelStyle: TextStyle(fontFamily: 'Poppins', fontSize: 13.sp, fontWeight: FontWeight.w600),
+        unselectedLabelStyle: TextStyle(fontFamily: 'Poppins', fontSize: 13.sp, fontWeight: FontWeight.w500),
       ),
 
       // ─── Text Theme ─────────────────────────────────────

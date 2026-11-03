@@ -98,6 +98,8 @@ class CycleInfo {
   final String? phaseLabel;
   final int? periodInDays;
   final int? averageCycleLength;
+  /// Real cycles the hormonal engine has learned from (Oct 2026).
+  final int cyclesLearned;
 
   const CycleInfo({
     this.dataProvided,
@@ -106,6 +108,7 @@ class CycleInfo {
     this.phaseLabel,
     this.periodInDays,
     this.averageCycleLength,
+    this.cyclesLearned = 0,
   });
 
   factory CycleInfo.fromJson(Map<String, dynamic> json) => CycleInfo(
@@ -115,6 +118,7 @@ class CycleInfo {
         phaseLabel: json['phaseLabel'] as String?,
         periodInDays: _toInt(json['periodInDays']),
         averageCycleLength: _toInt(json['averageCycleLength']),
+        cyclesLearned: _toInt(json['cyclesLearned']) ?? 0,
       );
 }
 
@@ -161,9 +165,13 @@ class GoalInfo {
 class LiveClass {
   final int? slotId;
   final String? classType;
+  /// Alias used by analytics / presence logging.
+  String? get type => classType;
   final String? trainerName;
   final int? durationMinutes;
   final int? caloriesEstimate;
+  /// Class intensity set by the trainer/admin (Slot.level), e.g. "Medium".
+  final String? level;
   final int? participantCount;
   final int? elapsedMinutes;
   final String? startedAtUtc;
@@ -173,6 +181,11 @@ class LiveClass {
   // workout_plan_details surfaces. UI displays these directly — no parsing.
   final String? start;
   final String? end;
+  /// App-side only: 0 = today, 1 = tomorrow (set when a Coming Up class
+  /// is shown in the big card as "Up next").
+  final int dayOffset;
+  /// Server: she already joined this class today → button says "Rejoin".
+  final bool joinedToday;
 
   const LiveClass({
     this.slotId,
@@ -180,6 +193,7 @@ class LiveClass {
     this.trainerName,
     this.durationMinutes,
     this.caloriesEstimate,
+    this.level,
     this.participantCount,
     this.elapsedMinutes,
     this.startedAtUtc,
@@ -187,6 +201,8 @@ class LiveClass {
     this.trainerLink,
     this.start,
     this.end,
+    this.dayOffset = 0,
+    this.joinedToday = false,
   });
 
   factory LiveClass.fromJson(Map<String, dynamic> json) => LiveClass(
@@ -195,6 +211,7 @@ class LiveClass {
         trainerName: json['trainerName'] as String?,
         durationMinutes: _toInt(json['durationMinutes']),
         caloriesEstimate: _toInt(json['caloriesEstimate']),
+        level: json['level']?.toString(),
         participantCount: _toInt(json['participantCount']),
         elapsedMinutes: _toInt(json['elapsedMinutes']),
         startedAtUtc: json['startedAtUtc'] as String?,
@@ -202,6 +219,7 @@ class LiveClass {
         trainerLink: json['trainerLink'] as String?,
         start: json['start'] as String?,
         end: json['end'] as String?,
+        joinedToday: json['joinedToday'] == true,
       );
 }
 
@@ -223,6 +241,7 @@ class ComingUpClass {
   // "trainer already went live" from a plain future class.
   final String? status;
   final String? trainerLink;
+  final String? level;
 
   const ComingUpClass({
     this.id,
@@ -236,6 +255,7 @@ class ComingUpClass {
     this.trainerName,
     this.status,
     this.trainerLink,
+    this.level,
   });
 
   factory ComingUpClass.fromJson(Map<String, dynamic> json) => ComingUpClass(
@@ -250,6 +270,7 @@ class ComingUpClass {
         trainerName: json['trainerName'] as String?,
         status: json['status'] as String?,
         trainerLink: json['trainerLink'] as String?,
+        level: json['level']?.toString(),
       );
 }
 

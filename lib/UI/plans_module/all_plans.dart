@@ -1,3 +1,4 @@
+import '../../helper/analytics_helper.dart';
 import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.dart';
 import 'package:fitness_zone_2/widgets/circular_progress.dart';
 import 'package:fitness_zone_2/widgets/meal_details.dart';
@@ -8,8 +9,15 @@ import 'package:get/get.dart';
 import '../../data/models/get_user_plan/get_user_plan.dart';
 
 class OurPlansScreen extends StatelessWidget {
-  OurPlansScreen({super.key});
+  OurPlansScreen({super.key, this.onlyCategoryId, this.headline});
   final HomeController homeController = Get.find();
+
+  /// Show only one kind of plan (1 diet · 2 workout · 3 combined), e.g. the
+  /// symptom-check upgrade "Add a PCOS meal plan to your classes" → 3.
+  final int? onlyCategoryId;
+
+  /// Optional line above the plans explaining why she's here.
+  final String? headline;
 
   static const _kCream = Color(0xFFEAF7E4);
   static const _kHeroDark = Color(0xFF163220);
@@ -17,6 +25,7 @@ class OurPlansScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    AnalyticsHelper.offerSeen('plans_screen');
     return Scaffold(
       backgroundColor: _kCream,
       body: SafeArea(
@@ -64,7 +73,15 @@ class OurPlansScreen extends StatelessWidget {
   }
 
   Widget _buildList() {
-    final plans = homeController.allPlanModel?.plans ?? const <Plan>[];
+    final all = homeController.allPlanModel?.plans ?? const <Plan>[];
+    var plans = all;
+    if (onlyCategoryId != null) {
+      final want = onlyCategoryId == 3 ? 'combined' : (onlyCategoryId == 1 ? 'diet' : 'workout');
+      final filtered = all
+          .where((p) => p.catId == onlyCategoryId || p.title.toLowerCase().contains(want))
+          .toList();
+      if (filtered.isNotEmpty) plans = filtered; // nothing matched: show all
+    }
     if (plans.isEmpty) {
       return const Center(
         child: Text(
@@ -77,12 +94,29 @@ class OurPlansScreen extends StatelessWidget {
         ),
       );
     }
+    final hasHeadline = (headline ?? '').isNotEmpty;
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-      itemCount: plans.length,
+      itemCount: plans.length + (hasHeadline ? 1 : 0),
       separatorBuilder: (_, __) => const SizedBox(height: 14),
-      itemBuilder: (context, index) {
-        final plan = plans[index];
+      itemBuilder: (context, i) {
+        if (hasHeadline && i == 0) {
+          return Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+            child: Text(
+              headline!,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: _kHeroDark,
+                height: 1.4,
+              ),
+            ),
+          );
+        }
+        final plan = plans[hasHeadline ? i - 1 : i];
         if (plan.countries != null &&
             plan.countries!.isNotEmpty &&
             plan.countries!.first.duration!.isNotEmpty) {

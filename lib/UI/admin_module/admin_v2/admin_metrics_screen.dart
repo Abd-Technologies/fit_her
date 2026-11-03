@@ -484,6 +484,7 @@ class _EscalationsBlock extends StatelessWidget {
     'REVIEW_FLAG': 'Review flag',
     'BOOKING_REMINDER_5X': 'Booking 5×',
     'SYSTEM_ISSUE': 'System',
+    'DIET_CHECKIN_HELP': 'Needs help (diet)',
   };
 
   @override

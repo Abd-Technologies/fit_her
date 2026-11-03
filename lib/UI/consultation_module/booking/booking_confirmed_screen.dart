@@ -8,8 +8,10 @@ import 'book_consultation_sheet.dart';
 
 /// "You're booked!" page shown right after a consultation is booked.
 ///
-/// Reschedule is only offered while the dietitian has NOT confirmed yet
-/// (status pending). We re-check the live status before opening it.
+/// Bookings are confirmed automatically (the dietitian opened the slot,
+/// so there's no "waiting for her to confirm" step). Reschedule stays
+/// open until 24 hours before the session (backend bookingPolicy); we
+/// re-check the live status before opening it.
 class BookingConfirmedScreen extends StatefulWidget {
   final int? appointmentId;
   final int dietitianId;
@@ -21,6 +23,8 @@ class BookingConfirmedScreen extends StatefulWidget {
   final String timeLabel; // e.g. 5:00 PM
   final String? note;
   final bool wasReschedule;
+  // A live workout class at the same time (see helper/classClash.js).
+  final Map<String, dynamic>? classClash;
 
   const BookingConfirmedScreen({
     Key? key,
@@ -34,20 +38,22 @@ class BookingConfirmedScreen extends StatefulWidget {
     this.dietitianName,
     this.note,
     this.wasReschedule = false,
+    this.classClash,
   }) : super(key: key);
 
   @override
   State<BookingConfirmedScreen> createState() => _BookingConfirmedScreenState();
 }
 
-const _bg = Color(0xFFEFF5EE);
-const _ink = Color(0xFF163220);
-const _muted = Color(0xFF7D8B80);
-const _green = Color(0xFF3F9B6A);
-const _line = Color(0xFFE6ECE4);
-const _iconBg = Color(0xFFEFF5EE);
-const _peach = Color(0xFFFDE9DC);
-const _peachInk = Color(0xFF9A4A1E);
+// App's existing V2 palette (same tokens as the other popups/screens).
+const _bg = Color(0xFFE8F4E0); // V2 mint page bg
+const _ink = Color(0xFF1A3A22); // V2 title/ink
+const _muted = Color(0xFF7A8C78); // V2 muted text
+const _green = Color(0xFF6DC55A); // V2 brand green
+const _line = Color(0xFFD8EDD4); // V2 border
+const _iconBg = Color(0xFFEAF7E4); // V2 accent tint
+const _peach = Color(0xFFEAF7E4); // avatar: V2 accent tint (was peach)
+const _peachInk = Color(0xFF1A3A22); // avatar letter: V2 ink
 
 TextStyle _t(double size, FontWeight w, Color c) =>
     TextStyle(fontFamily: 'Poppins', fontSize: size, fontWeight: w, color: c);
@@ -64,8 +70,18 @@ class _BookingConfirmedScreenState extends State<BookingConfirmedScreen> {
   bool get _hasName => widget.dietitianName?.trim().isNotEmpty ?? false;
   String get _name =>
       _hasName ? widget.dietitianName!.trim() : 'Your nutritionist';
-  String get _first =>
-      _hasName ? widget.dietitianName!.trim().split(' ').first : 'Your nutritionist';
+  bool get _within24h => DateTime.now()
+      .isAfter(widget.start.subtract(const Duration(hours: 24)));
+
+  String get _first {
+    if (!_hasName) return 'Your nutritionist';
+    final parts = widget.dietitianName!
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => !RegExp(r'^(dr|dr\.)$', caseSensitive: false).hasMatch(p))
+        .toList();
+    return parts.isEmpty ? widget.dietitianName!.trim() : parts.first;
+  }
 
   String get _day {
     final d = widget.start;
@@ -110,9 +126,13 @@ class _BookingConfirmedScreenState extends State<BookingConfirmedScreen> {
     if (!mounted) return;
     setState(() => _checking = false);
     final appt = ctrl.upcomingAppointment.value;
-    if (appt == null || appt.status != 'pending') {
+    final tooLate =
+        DateTime.now().isAfter(widget.start.subtract(const Duration(hours: 24)));
+    if (appt == null ||
+        (appt.status != 'pending' && appt.status != 'confirmed') ||
+        tooLate) {
       CustomToast.failToast(
-          msg: '$_first has already confirmed this time, so it can\'t be changed now.');
+          msg: "Your session is less than 24 hours away, so the time can't be changed.");
       return;
     }
     await Get.off<dynamic>(
@@ -146,7 +166,7 @@ class _BookingConfirmedScreenState extends State<BookingConfirmedScreen> {
                       width: 86,
                       height: 86,
                       decoration: const BoxDecoration(
-                        color: Color(0xFFDDEDE0),
+                        color: Color(0xFFD8EDD4),
                         shape: BoxShape.circle,
                       ),
                       alignment: Alignment.center,
@@ -179,6 +199,10 @@ class _BookingConfirmedScreenState extends State<BookingConfirmedScreen> {
                   ),
                   const SizedBox(height: 20),
                   _detailsCard(),
+                  if (_clashNote() != null) ...[
+                    const SizedBox(height: 12),
+                    _clashNote()!,
+                  ],
                   const SizedBox(height: 16),
                   _infoBox(),
                 ],
@@ -273,33 +297,96 @@ class _BookingConfirmedScreenState extends State<BookingConfirmedScreen> {
     );
   }
 
+  /// "A live class runs at the same time" note: information only, shown
+  /// just when a workout class overlaps the consultation.
+  Widget? _clashNote() {
+    final c = widget.classClash;
+    if (c == null || c['clashClass'] is! Map) return null;
+    String text(dynamic m) {
+      if (m is! Map) return '';
+      final t = '${m['time'] ?? ''}'.trim();
+      final ty = '${m['type'] ?? ''}'.trim();
+      return '$t $ty'.trim();
+    }
+    final clash = c['clashClass'] as Map;
+    final after = text(c['joinAfter']);
+    final next = text(c['nextClass']);
+    final parts = <String>[
+      if (after.isNotEmpty) 'Join after your consultation · $after',
+      if (next.isNotEmpty) 'Next class · $next',
+    ];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4E0),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF3D9A6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('🏃‍♀️ A live class runs at the same time',
+              style: _t(13, FontWeight.w700, const Color(0xFF8A5A06))),
+          const SizedBox(height: 4),
+          Text(
+            '${(clash['type'] ?? 'A class').toString().trim().isEmpty ? 'A class' : clash['type']} '
+            'is on at ${clash['time'] ?? ''} while you\'re with $_first. '
+            '${parts.isEmpty ? 'You can catch a class tomorrow.' : 'No problem, you can still work out today:'}',
+            style: _t(12.5, FontWeight.w400, const Color(0xFF5C4210)),
+          ),
+          if (parts.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(parts.join('  ·  '),
+                style: _t(12.5, FontWeight.w700, _ink)),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _infoBox() {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF7E6),
+        // White on the mint page, like the details card above it.
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF3DDA8)),
+        border: Border.all(color: const Color(0xFFD8EDD4)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.notifications_none_rounded,
-              size: 18, color: Color(0xFF9A7414)),
+          const Icon(Icons.check_circle_outline_rounded,
+              size: 18, color: Color(0xFF6DC55A)),
           const SizedBox(width: 10),
           Expanded(
             child: RichText(
               text: TextSpan(
-                style: _t(11.5, FontWeight.w400, const Color(0xFF6B5A2E)),
-                children: [
-                  TextSpan(text: '$_first will confirm your time soon. '),
-                  TextSpan(
-                    text: 'You can reschedule until then.',
-                    style: _t(11.5, FontWeight.w700, const Color(0xFF6B5A2E)),
-                  ),
-                  const TextSpan(
-                      text: ' The Join button appears on your home screen.'),
-                ],
+                style: _t(11.5, FontWeight.w400, const Color(0xFF1A3A22)),
+                children: _within24h
+                    ? [
+                        TextSpan(text: "You're all set with $_first. "),
+                        TextSpan(
+                          text: "This session is less than 24 hours away, so "
+                              "the time can't be changed.",
+                          style: _t(11.5, FontWeight.w700,
+                              const Color(0xFF1A3A22)),
+                        ),
+                        const TextSpan(
+                            text: ' Your Join button appears in the Diet tab.'),
+                      ]
+                    : [
+                        TextSpan(
+                            text: "You're all set with $_first. Need a different time? "),
+                        TextSpan(
+                          text: 'You can change it until 24 hours before.',
+                          style: _t(11.5, FontWeight.w700,
+                              const Color(0xFF1A3A22)),
+                        ),
+                        const TextSpan(
+                            text: ' Your Join button appears in the Diet tab.'),
+                      ],
               ),
             ),
           ),
@@ -348,7 +435,7 @@ class _BookingConfirmedScreenState extends State<BookingConfirmedScreen> {
                 Expanded(
                   child: _outline(
                     label: _checking ? 'Checking…' : 'Reschedule',
-                    color: const Color(0xFF4F5B52),
+                    color: _ink,
                     onTap: _reschedule,
                   ),
                 ),
@@ -371,7 +458,7 @@ class _BookingConfirmedScreenState extends State<BookingConfirmedScreen> {
       child: OutlinedButton(
         onPressed: onTap,
         style: OutlinedButton.styleFrom(
-          side: const BorderSide(color: Color(0xFFDDE8DA)),
+          side: const BorderSide(color: _line),
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12)),
           padding: const EdgeInsets.symmetric(horizontal: 8),

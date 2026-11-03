@@ -206,6 +206,13 @@ class FeedPostImage extends StatelessWidget {
             imageUrl: full,
             fit: BoxFit.cover,
             width: double.infinity,
+            // Decode at screen size, not full camera size (smooth scroll).
+            // sizeOf / devicePixelRatioOf: don't rebuild every photo while
+            // the keyboard slides up (typing a comment).
+            memCacheWidth: (MediaQuery.sizeOf(context).width *
+                    MediaQuery.devicePixelRatioOf(context))
+                .round(),
+            fadeInDuration: const Duration(milliseconds: 200),
             placeholder: (_, __) => SizedBox(height: 180.h),
             errorWidget: (_, __, ___) => SizedBox(
               height: 140.h,
@@ -249,7 +256,7 @@ class FeedLikeButton extends StatelessWidget {
       final on = post.isLiked.value;
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () => Get.find<PostController>().likePost(post.id),
+        onTap: () => Get.find<PostController>().likePost(post.id, target: post),
         child: Padding(
           padding: EdgeInsets.symmetric(vertical: 4.h),
           child: Row(

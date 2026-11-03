@@ -1,9 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../../../helper/pk_time.dart';
+import '../../../widgets/toasts.dart';
+import '../../../data/controllers/home_controller/home_controller.dart';
+import '../../plans_module/all_plans.dart';
 
 import '../../../data/controllers/consultation_controller/consultation_controller.dart';
 import '../../../data/models/consultation/dietitian_availability.dart';
+import '../../../data/controllers/diet_plan_user_controller/diet_plan_user_controller.dart';
+import '../popups/booking_locked_sheet.dart';
 import 'booking_confirmed_screen.dart';
+import '../../pre_consultation/pre_consultation_form_screen.dart';
 
 /// Full page "Book a session" screen (design v2).
 ///
@@ -44,6 +51,48 @@ class BookConsultationSheet extends StatefulWidget {
     required String kind,
     int? rescheduleAppointmentId,
   }) async {
+    // Change policy: after a second missed session on the package she
+    // can't self-book; every booking entry point lands here, so check
+    // once and point her to the team instead of a slot picker the
+    // server would refuse.
+    // Plan paused (Oct 2026): no consultations, new or moved, until she
+    // resumes. The server refuses a booking while paused too.
+    if (Get.isRegistered<HomeController>()) {
+      final home = Get.find<HomeController>();
+      await home.refreshPlanFrozen();
+      if (home.planFrozen.value) {
+        CustomToast.warnToast('Your plan is paused',
+            sub: 'Resume your plan to book a consultation. You can still log your meals, water and sleep.');
+        return;
+      }
+    }
+    if (rescheduleAppointmentId == null &&
+        Get.isRegistered<DietPlanUserController>()) {
+      final dietCtrl = Get.find<DietPlanUserController>();
+      await dietCtrl.loadBookingContext(refresh: true);
+      if (dietCtrl.bookingContext.value?.bookingLocked == true) {
+        await BookingLockedSheet.show();
+        return;
+      }
+      // Plan ended: no new consultation until she renews (the server
+      // refuses it too). Consultations booked before stay as they are.
+      final ctx = dietCtrl.bookingContext.value;
+      if (ctx != null && (ctx.planEnded || ctx.nextStep == 'renew')) {
+        CustomToast.warnToast('Your plan has ended',
+            sub: 'Renew your plan to book a consultation.',
+            action: 'Renew',
+            onAction: () => Get.to(() => OurPlansScreen()));
+        return;
+      }
+    }
+    // Health form first (Oct 2026): before her FIRST consultation she
+    // fills the health form (only the missing questions), then booking
+    // continues. The server refuses the booking too (FORM_REQUIRED), so
+    // this can't be skipped. Follow-ups and reschedules aren't asked.
+    if (rescheduleAppointmentId == null && kind != 'followup') {
+      final ok = await _ensureHealthForm();
+      if (!ok) return;
+    }
     await Get.to<dynamic>(
       () => BookConsultationSheet(
         popupVariable: popupVariable,
@@ -56,6 +105,27 @@ class BookConsultationSheet extends StatefulWidget {
       ),
       transition: Transition.downToUp,
     );
+  }
+
+  /// True when the health form is done (or now finished). Opens it when
+  /// something is missing; if she leaves it unfinished, booking stops.
+  static Future<bool> _ensureHealthForm() async {
+    if (!Get.isRegistered<ConsultationController>()) return true;
+    final consult = Get.find<ConsultationController>();
+    final req = await consult.getPreConsultRequirements('diet');
+    if (req == null || req['shouldShow'] != true) return true; // done (or check failed: server still guards)
+    // Server decides the questions from her package (planType in reply).
+    await PreConsultationFormScreen.open(
+        planType: '${req['planType'] ?? 'diet'}', canLater: true);
+    final after = await consult.getPreConsultRequirements('diet');
+    if (after == null || after['shouldShow'] != true) return true;
+    Get.snackbar(
+      'Health form needed',
+      'Please finish your health form first. It helps your dietitian prepare for your consultation.',
+      snackPosition: SnackPosition.BOTTOM,
+      margin: const EdgeInsets.all(12),
+    );
+    return false;
   }
 
   @override
@@ -110,9 +180,31 @@ class _BookConsultationSheetState extends State<BookConsultationSheet> {
     return n.isEmpty ? 'Your nutritionist' : n;
   }
 
+  /// Short name for "with …" / "Anything … should know?". A title such
+  /// as "DR" / "Dr." stays with the name ("Dr Asma"), never "DR" alone.
   String get _firstName {
     final n = _dn?.trim() ?? '';
-    return n.isEmpty ? 'your nutritionist' : n.split(' ').first;
+    if (n.isEmpty) return 'your nutritionist';
+    final parts = n.split(RegExp(r'\s+'));
+    final first = parts.first.replaceAll('.', '').toLowerCase();
+    if ((first == 'dr' || first == 'doctor') && parts.length > 1) {
+      return 'Dr ${parts[1]}';
+    }
+    return parts.first;
+  }
+
+  /// Length of a slot from its start and end ("12:30 PM"–"1:30 PM" = 60).
+  static int? _slotMinutes(dynamic s) {
+    if (s == null) return null;
+    final a = _minutes(s.start as String?);
+    final b = _minutes(s.end as String?);
+    if (a == null || b == null || b <= a) return null;
+    return b - a;
+  }
+
+  String get _durationLabel {
+    final m = _slotMinutes(_selected) ?? _slotMinutes(_soonest);
+    return m == null ? 'Video call' : '$m min · video call';
   }
 
   @override
@@ -230,7 +322,7 @@ class _BookConsultationSheetState extends State<BookConsultationSheet> {
     if (s == null || ctrl == null || _booking) return;
     setState(() => _booking = true);
     final outcome = await ctrl.bookConsultation(
-      date: s.date,
+      date: s.pkDate, // the server's (Pakistan) date, not her local one
       userId: widget.userId,
       dietitianId: widget.dietitianId,
       timeSlotId: s.slotDietId ?? 0,
@@ -251,7 +343,7 @@ class _BookConsultationSheetState extends State<BookConsultationSheet> {
     if (ok) {
       _booked = true;
       await ctrl.completePopup(widget.popupVariable, metadata: {
-        'date': s.date,
+        'date': s.pkDate,
         'slotDietId': s.slotDietId,
       });
       final day = DateTime.tryParse(s.date) ?? DateTime.now();
@@ -268,6 +360,7 @@ class _BookConsultationSheetState extends State<BookConsultationSheet> {
           timeLabel: _label(s.start),
           note: _note.text,
           wasReschedule: widget.rescheduleAppointmentId != null,
+          classClash: outcome.classClash,
         ),
         transition: Transition.fadeIn,
       );
@@ -461,10 +554,16 @@ class _BookConsultationSheetState extends State<BookConsultationSheet> {
                   children: [
                     const Icon(Icons.videocam_outlined, size: 14, color: _ink),
                     const SizedBox(width: 4),
-                    Text('30 min · video call',
+                    Text(_durationLabel,
                         style: _t(11, FontWeight.w500, _ink)),
                   ],
                 ),
+                // Nov 2026: outside Pakistan, say whose time this is.
+                if (!PkTime.phoneInPakistan) ...[
+                  const SizedBox(height: 2),
+                  Text('Times shown in your local time',
+                      style: _t(11, FontWeight.w500, _peachInk)),
+                ],
               ],
             ),
           ),
@@ -760,7 +859,30 @@ class _BookConsultationSheetState extends State<BookConsultationSheet> {
         color: Colors.white,
         border: Border(top: BorderSide(color: _line)),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Oct 2026: say what she can still do after booking — the time
+          // can't change inside 24 h, and she has ONE late cancel per
+          // package. Once that's used, say so clearly (red).
+          if (_policyNote(s) != null) ...[
+            Container(
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: _lateUsed ? const Color(0xFFFDECEC) : const Color(0xFFFFF4E0),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                _policyNote(s)!,
+                style: _t(11, FontWeight.w500,
+                    _lateUsed ? const Color(0xFFA33A3A) : const Color(0xFF8A5A06)),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          Row(
         children: [
           Container(
             width: 50,
@@ -789,7 +911,7 @@ class _BookConsultationSheetState extends State<BookConsultationSheet> {
                 Text(
                   s == null
                       ? 'Choose a time above'
-                      : '${_niceDate(s.date)} · 30 min',
+                      : '${_niceDate(s.date)}${_slotMinutes(s) != null ? ' · ${_slotMinutes(s)} min' : ''}',
                   style: _t(11, FontWeight.w500, _muted),
                 ),
               ],
@@ -822,7 +944,51 @@ class _BookConsultationSheetState extends State<BookConsultationSheet> {
             ),
           ),
         ],
+          ),
+        ],
       ),
     );
+  }
+
+  /// Her one late change on this package is already used (server truth).
+  bool get _lateUsed {
+    if (!Get.isRegistered<DietPlanUserController>()) return false;
+    return Get.find<DietPlanUserController>()
+            .bookingContext
+            .value
+            ?.lateChangeAvailable ==
+        false;
+  }
+
+  /// Booking-policy note under the picked time, or null for none.
+  String? _policyNote(DietitianAvailabilitySlot? s) {
+    final soon = _slotWithin24h(s);
+    if (soon && _lateUsed) {
+      return "This session is within 24 hours and you've already used your "
+          'one late change for this package. Once booked, it can\'t be '
+          'changed or cancelled, so pick a time you\'re sure about.';
+    }
+    if (soon) {
+      return "This session is within 24 hours, so its time can't be changed "
+          'after booking. You can cancel it once: that uses your one late '
+          'change for this package.';
+    }
+    if (_lateUsed && s != null) {
+      return "You've used your one late change for this package. You can "
+          'change or cancel this session until 24 hours before it, not after.';
+    }
+    return null;
+  }
+
+  /// Mirrors the backend 24h rule: a slot starting within 24 hours can't
+  /// be rescheduled later, so tell her before she confirms.
+  bool _slotWithin24h(DietitianAvailabilitySlot? s) {
+    if (s == null) return false;
+    final day = DateTime.tryParse(s.date);
+    final mins = _minutes(s.start);
+    if (day == null || mins == null) return false;
+    final start =
+        DateTime(day.year, day.month, day.day, mins ~/ 60, mins % 60);
+    return start.difference(DateTime.now()) < const Duration(hours: 24);
   }
 }

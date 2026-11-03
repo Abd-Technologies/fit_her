@@ -4,6 +4,8 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
+import '../../helper/private_file_url.dart';
+
 import 'report_issue_screen.dart' show SupportStatusBadge;
 import 'support_api.dart';
 
@@ -321,11 +323,11 @@ class _SupportTicketScreenState extends State<SupportTicketScreen> {
                       if (hasImg) ...[
                         if (hasBody) const SizedBox(height: 8),
                         GestureDetector(
-                          onTap: () => _viewImage(imageUrl!),
+                          onTap: () => _viewImage(privateFileUrl(imageUrl)),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(10),
                             child: Image.network(
-                              imageUrl!,
+                              privateFileUrl(imageUrl),
                               width: 140,
                               height: 170,
                               fit: BoxFit.cover,

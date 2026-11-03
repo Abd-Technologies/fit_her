@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../zoom_meeting.dart';
 import 'package:dart_jsonwebtoken/dart_jsonwebtoken.dart';
 import 'package:fitness_zone_2/data/services/youtube_tutorial_service.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:get/get.dart';
 
 class ZoomMeetingWidget extends StatefulWidget {
@@ -26,8 +27,9 @@ class _ZoomMeetingWidgetState extends State<ZoomMeetingWidget> {
   @override
   void initState() {
     super.initState();
-    const sdkKey = 'hLsFMz5nRKyRXt2SUOONw';
-    const sdkSecret = 'R5z8c6RmcnSRdKbvacQwrjIdMDv7lTW6';
+    // From .env (Oct 2026), no longer written in the code.
+    final sdkKey = dotenv.env['ZOOM_SDK_KEY'] ?? '';
+    final sdkSecret = dotenv.env['ZOOM_SDK_SECRET'] ?? '';
 
     generateZoomJwt(sdkKey: sdkKey, sdkSecret: sdkSecret);
   }

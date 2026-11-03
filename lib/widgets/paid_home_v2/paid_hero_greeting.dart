@@ -5,6 +5,8 @@ import '../../UI/auth_module/sign_up_screen/goal_screen.dart';
 import '../../data/controllers/paid_home_controller/paid_home_controller.dart';
 import '../../data/models/home_dashboard/home_dashboard_model.dart';
 import '../new_home/phase_theme.dart';
+import '../../UI/profile_setup/profile_completion.dart';
+import '../../UI/profile_setup/profile_completion_widgets.dart';
 
 /// H-01 greeting block: time-aware greeting + split-weight phase title
 /// + dynamic chip row. Separators only appear between visible chips.
@@ -23,12 +25,17 @@ class PaidHeroGreeting extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final name = (dashboard.user?.firstName ?? '').trim();
-    final resolvedName = name.isEmpty ? 'there' : name;
+    // Display-only: capitalise the first letter of each word.
+    final resolvedName = name.isEmpty ? 'there' : _titleCase(name);
     final greeting = '${_timeAwareGreeting()}, $resolvedName 🌿';
 
-    final phaseLabel =
-        dashboard.cycle?.phaseLabel ?? theme.phaseLabel;
-    final emoji = theme.emoji;
+    // No period date yet: never guess a phase (it used to say
+    // "Follicular Phase, Peak energy" for everyone without data).
+    final noCycle = dashboard.cycle?.cycleDay == null;
+    final phaseLabel = noCycle
+        ? 'Your day'
+        : (dashboard.cycle?.phaseLabel ?? theme.phaseLabel);
+    final emoji = noCycle ? '🌿' : theme.emoji;
 
     final chipColors = _chipColors(phase);
     final chips = <Widget>[];
@@ -41,15 +48,17 @@ class PaidHeroGreeting extends StatelessWidget {
       );
     }
 
-    // Energy chip — always shown (theme-derived).
-    chips.add(
-      _chip(theme.energyLabel, 11, null,
-          Colors.white.withOpacity(0.45)),
-    );
+    // Energy chip — theme-derived, so only with a real cycle phase.
+    if (!noCycle) {
+      chips.add(
+        _chip(theme.energyLabel, 11, FontWeight.w500,
+            Colors.white.withOpacity(0.82)),
+      );
+    }
 
-    // Streak chip — show even at 0 (per B2.3 clarification).
+    // Streak chip — hidden at 0 (Day 1 redesign); shown from 1 day.
     final streak = dashboard.goal?.streakDays;
-    if (streak != null) {
+    if (streak != null && streak >= 1) {
       chips.add(
         _chip('$streak🔥', 11, FontWeight.w600, chipColors.streak),
       );
@@ -79,12 +88,10 @@ class PaidHeroGreeting extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w300,
-              // HTML: rgba(255,255,255,.22). We bumped this to 0.75 for the
-              // unpaid hero based on user feedback "too dull to read"; the
-              // paid hero is identical design intent — applying same bump.
-              color: Colors.white.withOpacity(0.75),
+              fontSize: 11.5,
+              fontWeight: FontWeight.w400,
+              // Oct 2026: brighter again ("make it brighter").
+              color: Colors.white.withOpacity(0.92),
             ),
           ),
           const SizedBox(height: 14),
@@ -95,8 +102,8 @@ class PaidHeroGreeting extends StatelessWidget {
                   text: '$phaseLabel ',
                   style: TextStyle(
                     fontSize: 32,
-                    fontWeight: FontWeight.w300,
-                    color: Colors.white.withOpacity(0.55),
+                    fontWeight: FontWeight.w400,
+                    color: Colors.white.withOpacity(0.96),
                     letterSpacing: -0.5,
                     height: 1.0,
                   ),
@@ -123,10 +130,23 @@ class PaidHeroGreeting extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: interleaved,
           ),
+          // Paid client with no period date: ask for it right here.
+          if (noCycle)
+            Obx(() => ProfileCompletion.to.periodLocked
+                ? const Padding(
+                    padding: EdgeInsets.only(top: 14),
+                    child: HeroPeriodCard(),
+                  )
+                : const SizedBox.shrink()),
         ],
       ),
     );
   }
+
+  static String _titleCase(String s) => s
+      .split(' ')
+      .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1))
+      .join(' ');
 
   String _timeAwareGreeting() {
     final h = DateTime.now().hour;
@@ -139,7 +159,7 @@ class PaidHeroGreeting extends StatelessWidget {
         '·',
         style: TextStyle(
           fontSize: 11,
-          color: Colors.white.withOpacity(0.18),
+          color: Colors.white.withOpacity(0.45),
         ),
       );
 

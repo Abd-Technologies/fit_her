@@ -1,3 +1,4 @@
+import '../../../helper/analytics_helper.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,9 @@ import 'package:get/get.dart';
 import '../../../values/my_imgs.dart';
 import '../login/login.dart';
 import '../sign_up_screen/signup_screen_user.dart';
+import 'animated_cycle_wheel.dart';
+import '../../../widgets/anim/splash_intro.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 
 /// Sprint 1 / SA-00 V3 Refined — Welcome / Get Started landing.
 ///
@@ -38,24 +42,20 @@ class WalkThroughScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor: _bgTop,
+      statusBarColor: Colors.white,
       statusBarIconBrightness: Brightness.dark,
     ));
 
     return Scaffold(
+      // Plain white background (Oct 2026), no green gradient.
+      backgroundColor: Colors.white,
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [_bgTop, _bgBottom],
-          ),
-        ),
+        color: Colors.white,
         child: SafeArea(
           child: Column(
             children: [
               // Brand mark — small wordmark sitting at the top.
-              Padding(
+              _riseIn(context, 1350, Padding(
                 padding: EdgeInsets.only(top: 16.h),
                 child: Opacity(
                   opacity: 0.92,
@@ -65,16 +65,35 @@ class WalkThroughScreen extends StatelessWidget {
                     fit: BoxFit.contain,
                   ),
                 ),
-              ),
+              )),
 
               // Cycle wheel — vertically centred in remaining space.
+              // Final animated wheel (Oct 2026): draws itself, smooth
+              // phase colours, travelling dot, folding centre words.
+              // Sized from the free space so it fits every phone.
               Expanded(
-                child: Center(child: _buildWheel()),
+                child: LayoutBuilder(
+                  builder: (context, box) {
+                    // Use the free space: as wide as the screen allows
+                    // (82%), as tall as the gap allows, capped at 340.
+                    final size = math.min(
+                      math.min(box.maxWidth * 0.82, box.maxHeight / 1.2),
+                      340.0,
+                    );
+                    return Center(
+                      child: Hero(
+                        tag: AnimatedCycleWheel.heroTag,
+                        flightShuttleBuilder: AnimatedCycleWheel.heroFlight,
+                        child: RepaintBoundary(child: AnimatedCycleWheel(size: size)),
+                      ),
+                    );
+                  },
+                ),
               ),
 
               // Bottom body block — headline, sub-copy, CTAs.
-              Padding(
-                padding: EdgeInsets.fromLTRB(32.w, 0, 32.w, 48.h),
+              _riseIn(context, 1460, Padding(
+                padding: EdgeInsets.fromLTRB(32.w, 0, 32.w, 28.h),
                 child: Column(
                   children: [
                     Text(
@@ -89,33 +108,30 @@ class WalkThroughScreen extends StatelessWidget {
                         height: 1.05,
                       ),
                     ),
-                    SizedBox(height: 10.h),
-                    ConstrainedBox(
-                      constraints: BoxConstraints(maxWidth: 280.w),
-                      child: Text(
-                        'Made for every part of you.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontFamily: 'Poppins',
-                          fontSize: 13.sp,
-                          fontWeight: FontWeight.w400,
-                          color: _textSub,
-                          height: 1.55,
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: 28.h),
+                    SizedBox(height: 22.h),
                     _buildPrimaryButton(),
                     SizedBox(height: 10.h),
                     _buildSecondaryButton(),
                   ],
                 ),
-              ),
+              )),
             ],
           ),
         ),
       ),
     );
+  }
+
+  /// Right after the splash (first launch): the logo and "Welcome to your
+  /// rhythm" + buttons rise in once the ring has built itself from the
+  /// splash dots. Any other time: shown as normal.
+  static Widget _riseIn(BuildContext context, int delayMs, Widget child) {
+    if (!SplashIntro.active || (MediaQuery.maybeOf(context)?.disableAnimations ?? false)) return child;
+    final delay = Duration(milliseconds: delayMs);
+    return child
+        .animate()
+        .fadeIn(delay: delay, duration: const Duration(milliseconds: 450), curve: Curves.easeOutCubic)
+        .slideY(begin: 0.12, end: 0, delay: delay, duration: const Duration(milliseconds: 450), curve: Curves.easeOutCubic);
   }
 
   // ── Cycle wheel ────────────────────────────────────────────────────────
@@ -322,7 +338,12 @@ class WalkThroughScreen extends StatelessWidget {
             ),
           ),
           onPressed: () {
-            Get.to(() => SignUpNewUser());
+            AnalyticsHelper.signupStepViewed('signup_form');
+            // Ring shrinks up into Sign-up, the card rises (same as Log in).
+            Get.to(() => SignUpNewUser(fromWelcome: true),
+                transition: Transition.fadeIn,
+                curve: Curves.fastOutSlowIn,
+                duration: const Duration(milliseconds: 480));
           },
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -362,7 +383,12 @@ class WalkThroughScreen extends StatelessWidget {
           padding: EdgeInsets.symmetric(vertical: 14.h),
         ),
         onPressed: () {
-          Get.to(() => Login());
+          // Ring shrinks up into Login, the sign-in card rises (fade route
+          // so only the ring and the card move).
+          Get.to(() => const Login(fromWelcome: true),
+              transition: Transition.fadeIn,
+              curve: Curves.fastOutSlowIn,
+              duration: const Duration(milliseconds: 480));
         },
         child: RichText(
           text: TextSpan(

@@ -35,7 +35,13 @@ class _PlansToDeliverScreenState extends State<PlansToDeliverScreen> {
   @override
   void initState() {
     super.initState();
-    _refresh();
+    // After the first frame: starting the load flips observable state
+    // that other screens' Obx widgets watch, and doing that while this
+    // screen is still being built crashed with "markNeedsBuild called
+    // during build".
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _refresh();
+    });
   }
 
   Future<void> _refresh() async {
@@ -82,6 +88,39 @@ class _PlansToDeliverScreenState extends State<PlansToDeliverScreen> {
             ),
           );
         }
+        final error = _diet.clientDataError.value;
+        if (error != null) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off_rounded, size: 36, color: _kSoft),
+                  const SizedBox(height: 10),
+                  Text(
+                    error,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontFamily: 'Poppins', fontSize: 14, color: _kInk),
+                  ),
+                  const SizedBox(height: 14),
+                  TextButton(
+                    onPressed: _refresh,
+                    child: const Text(
+                      'Try again',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontWeight: FontWeight.w700,
+                        color: _kAccent,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
         final owed = _owed();
         return RefreshIndicator(
           color: _kAccent,
@@ -90,7 +129,7 @@ class _PlansToDeliverScreenState extends State<PlansToDeliverScreen> {
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
             children: [
               const Text(
-                'Every plan is due within 48 hours of the consultation.',
+                "Every plan is due within 2 working days of the consultation (weekends don't count).",
                 style: TextStyle(fontFamily: 'Poppins', fontSize: 12, color: _kSoft),
               ),
               const SizedBox(height: 14),

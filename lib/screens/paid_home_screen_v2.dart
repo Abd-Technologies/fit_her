@@ -1,22 +1,29 @@
+import '../widgets/weekly_checkin/weekly_checkin_card.dart';
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import '../widgets/paid_home_v2/consultation_home_banner.dart';
+import '../UI/consultation_module/booking/upcoming_consultation_card.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
 
 import '../UI/consultation_module/popup_orchestrator.dart';
 import '../UI/dashboard_module/bottom_bar_screen/bottom_bar_screen.dart';
+import '../data/controllers/home_controller/home_controller.dart';
 import '../data/controllers/paid_home_controller/paid_home_controller.dart';
 import '../data/models/home_dashboard/home_dashboard_model.dart';
 import '../utils/app_clock.dart';
+import '../widgets/anim/motion.dart';
+import '../widgets/anim/skeleton.dart';
+import '../widgets/class_feedback/class_feedback_card.dart';
 import '../widgets/paid_home_v2/paid_cycle_card.dart';
 import '../widgets/paid_home_v2/paid_footer.dart';
 import '../widgets/paid_home_v2/paid_hero.dart';
 import '../widgets/paid_home_v2/paid_insight_card.dart';
 import '../widgets/paid_home_v2/paid_stats_row.dart'
-    show PaidStatsRow;
+    show PaidStatsRow, PaidClassesTile;
 import '../widgets/paid_home_v2/today_insights_box.dart';
 import '../widgets/paid_home_v2/talk_to_expert_card.dart';
 import '../widgets/v2/plan_expiry_banner.dart';
@@ -24,7 +31,12 @@ import '../widgets/v2/plan_frozen_banner.dart';
 import '../widgets/v2/v2_plan_preparing_card.dart';
 import '../widgets/v2/v2_trial_banner.dart';
 import '../main.dart' show routeObserver;
-import '../widgets/v2/v2_today_meals_section.dart' show V2Day7TriggerBanner;
+import '../UI/profile_setup/profile_setup_gate.dart';
+import '../UI/profile_setup/profile_completion.dart';
+import '../UI/profile_setup/profile_completion_widgets.dart';
+import '../widgets/plan_welcome/plan_welcome_moment.dart';
+import '../helper/popup_manager.dart';
+import '../widgets/trial_moments/trial_moments.dart';
 
 /// The three genuinely daily inputs on this screen, in the order they
 /// appear top-to-bottom (Mood, then Water/Sleep side by side — Water
@@ -77,6 +89,16 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
   // _controller.refreshDashboard() on return would NOT have picked up a
   // freeze/unfreeze done on Profile -- only remounting them does.
   int _refreshGen = 0;
+
+  // First-load entrance: true once the skeleton has been shown, so the
+  // real cards fade/slide in one after another the first time data
+  // arrives. Never reset, so the wrappers stay in the tree and pull-to-
+  // refresh / rebuilds don't replay the animation (an Animate widget
+  // only plays once, when it is first mounted).
+  bool _playEntry = false;
+
+  Widget _enter(Widget child, int index, {double dy = 0.12}) =>
+      _playEntry ? child.fhEnter(context, index: index, dy: dy) : child;
 
   // Guided scroll: after she logs her feeling the screen glides down to
   // water and sleep; once those are done it glides on to the stats row.
@@ -133,6 +155,7 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
   // cases (resume from background, network drop). _lastContactAt
   // drives the "Reconnecting…" banner.
   Timer? _heartbeatTimer;
+  Worker? _opensWorker;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   DateTime? _lastContactAt;
   // Guard against overlapping heartbeats. The 30s timer + foreground
@@ -153,13 +176,46 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
       if (_controller.dashboard.value == null) {
         _controller.loadDashboard().then((_) {
           if (mounted) setState(() => _lastContactAt = AppClock.now());
+          ProfileCompletion.to.reload(force: true);
         });
       } else {
         _lastContactAt = AppClock.now();
+        ProfileCompletion.to.reload(force: true);
       }
     });
 
     _heartbeatTimer = Timer.periodic(_kHeartbeatInterval, (_) => _heartbeat());
+
+    // Old clients: finish the health form and pick class reminder times
+    // (skippable 3 times, then compulsory). Small delay so home shows first.
+    // One-time "Welcome to Fit Her" right after a paid plan is activated
+    // (self-checks: paid, not trial, plan started <= 3 days ago, once per
+    // plan). The health-form gate waits until she has closed it.
+    final Future<void> welcome = Future<void>.delayed(
+        const Duration(milliseconds: 1200), () async {
+      if (mounted) await PlanWelcomeMoment.maybeShow();
+    });
+    Future.delayed(const Duration(seconds: 3), () async {
+      await welcome;
+      if (mounted) ProfileSetupGate.checkAndShow();
+    });
+    // Free-trial moment of the day (Day 3 / 4 / last day), once.
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) TrialMomentController.ensure().loadAndMaybeShow();
+    });
+    // Nov 2026: rate the consultation she just had (pop-up, once).
+    Future.delayed(const Duration(seconds: 4), () {
+      if (mounted) SessionRatingPopup.maybeShow();
+    });
+    // Pop-up manager: a new app open is a new turn. Ask again for the
+    // ones that lost their turn (each still checks its own rules).
+    _opensWorker = ever(PopupManager.opens, (_) async {
+      if (!mounted) return;
+      await PlanWelcomeMoment.maybeShow();
+      if (mounted) ProfileSetupGate.checkAndShow();
+      if (mounted) TrialMomentController.ensure().loadAndMaybeShow();
+      if (mounted) SessionRatingPopup.maybeShow();
+    });
 
     _connectivitySub = Connectivity()
         .onConnectivityChanged
@@ -180,6 +236,7 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
     routeObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     _heartbeatTimer?.cancel();
+    _opensWorker?.dispose();
     _connectivitySub?.cancel();
     super.dispose();
   }
@@ -194,6 +251,7 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
   @override
   void didPopNext() {
     _heartbeat(reason: 'route-return');
+    ProfileCompletion.to.reload();
     if (mounted) setState(() => _refreshGen++);
   }
 
@@ -331,9 +389,13 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
 
   Widget _buildBody() {
     return Obx(() {
-      if (_controller.isLoading.value &&
-          _controller.dashboard.value == null) {
-        return const Center(child: CircularProgressIndicator());
+      // Also covers the very first frame, before loadDashboard() has
+      // flipped isLoading on (any failure always sets errorMessage).
+      if (_controller.dashboard.value == null &&
+          (_controller.isLoading.value ||
+              _controller.errorMessage.value.isEmpty)) {
+        _playEntry = true;
+        return const _PaidHomeSkeleton();
       }
       final dashboard = _controller.dashboard.value;
       if (dashboard == null) {
@@ -347,6 +409,17 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
         );
       }
       final hasCycle = dashboard.cycle?.cycleDay != null;
+      // Day 1 of the free trial: hold back the hormone check (it shows
+      // from Day 2, and always for paid). Same day maths as
+      // V2TrialBanner; reading the Rx values here keeps it reactive.
+      final home = Get.isRegistered<HomeController>()
+          ? Get.find<HomeController>()
+          : null;
+      final trialStart = home?.trialStartedAt.value;
+      final isTrialDay1 = home != null &&
+          home.trialLive.value &&
+          trialStart != null &&
+          DateTime.now().difference(trialStart).inHours < 24;
       final nextUp = _nextDailyItem(dashboard);
       _maybeGuideScroll(nextUp);
       return RefreshIndicator(
@@ -356,16 +429,26 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
             padding: EdgeInsets.zero,
             child: Column(
               children: [
-                PaidHero(
-                  key: ValueKey('hero_$_refreshGen'),
-                  dashboard: dashboard,
+                _enter(
+                  PaidHero(
+                    key: ValueKey('hero_$_refreshGen'),
+                    dashboard: dashboard,
+                  ),
+                  0,
+                  // Fade only: the hero paints under the status bar.
+                  dy: 0,
                 ),
                 // Renewal heads-up — same "self-hides, own margin" sibling
                 // pattern as V2Day7TriggerBanner right below. Sits above it
                 // so a lapsing/expired plan is the first thing a user sees
                 // under the hero, ahead of the day-7 check-in nudge.
+                // Her consultation (Nov 2026): today / starting / live /
+                // late / rate / canceled. Self-hides when nothing's due.
+                const ConsultationHomeBanner(),
                 // Free trial: "Day 2 of 3" + Upgrade. Self-hides for paid.
                 const V2TrialBanner(),
+                // Today's trial moment, until she opens it (self-hides).
+                const TrialMomentCard(padding: EdgeInsets.fromLTRB(16, 10, 16, 0)),
                 PlanExpiryBanner(key: ValueKey('expiry_$_refreshGen')),
                 // "Your plan is being prepared, expected by ..." between
                 // consultation and delivery. Self-hides otherwise.
@@ -395,39 +478,117 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
                 // 16w margin — putting it inside the 16-padded inner
                 // Column would double-pad. Self-hides when ineligible,
                 // so this slot only contributes layout on Day 7+.
-                const V2Day7TriggerBanner(),
+                // Day 7 check-in banner removed (Oct 2026): the weekly
+                // check-in card below asks the Day 7 questions in week 1.
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      // Old paid client who skipped her profile: "reminders
+                      // for all classes" note + "Finish your profile"
+                      // checklist. Hides itself when nothing is missing.
+                      const ProfileCompletionSection(),
                       // Book a call with her dietitian (hides itself when
                       // she has no dietitian or a call is already booked).
-                      TalkToExpertCard(key: ValueKey('expert_$_refreshGen')),
-                      PaidInsightCard(dashboard: dashboard),
+                      // "How was your class?" (only after a class ended).
+                      _enter(const ClassFeedbackCard(), 1),
+                      // Weekly measurements (hidden once done this week).
+                      _enter(const WeeklyCheckinCard(), 1),
+                      _enter(TalkToExpertCard(key: ValueKey('expert_$_refreshGen')), 1),
+                      // Luna's tip follows her cycle phase: without her
+                      // period date it waits for the profile.
+                      _enter(
+                        Obx(() {
+                          // Read the observable FIRST, before `hasCycle`.
+                          // `!hasCycle && periodLocked` short-circuits when
+                          // she has cycle data, so Obx saw no observable
+                          // and GetX threw "improper use of GetX".
+                          final locked = ProfileCompletion.to.periodLocked;
+                          return !hasCycle && locked
+                              ? ProfileLockedCard(
+                                  title: 'Luna · your daily tip',
+                                  body: 'Tips for food and workouts that match your phase.',
+                                  action: 'Add your period date to unlock',
+                                onTap: ProfileCompletion.to.openPeriod,
+                                )
+                              : PaidInsightCard(dashboard: dashboard);
+                        }),
+                        2,
+                      ),
                       const SizedBox(height: 8),
                       // "Today's insights" box: feeling, water and sleep.
                       // Inputs stay open until all three are logged, then
                       // it folds into three tiles. The soft glow still
                       // points at the next unfilled input.
-                      TodayInsightsBox(
-                        dashboard: dashboard,
-                        glowMood: nextUp == _DailyItem.mood,
-                        glowWater: nextUp == _DailyItem.water,
-                        glowSleep: nextUp == _DailyItem.sleep,
-                        waterSleepKey: _waterSleepKey,
+                      _enter(
+                        TodayInsightsBox(
+                          dashboard: dashboard,
+                          glowMood: nextUp == _DailyItem.mood,
+                          glowWater: nextUp == _DailyItem.water,
+                          glowSleep: nextUp == _DailyItem.sleep,
+                          waterSleepKey: _waterSleepKey,
+                        ),
+                        3,
                       ),
                       const SizedBox(height: 8),
-                      KeyedSubtree(
-                        key: _statsKey,
-                        child: PaidStatsRow(dashboard: dashboard),
+                      _enter(
+                        KeyedSubtree(
+                          key: _statsKey,
+                          // Weight | Hormone check | Meals (Oct 2026).
+                          child: PaidStatsRow(
+                            dashboard: dashboard,
+                            // Weight | Classes once she has joined a class
+                            // this week (the health check moves next to
+                            // Cycle); otherwise Weight | Health checks.
+                            withClasses: PaidClassesTile.shows(dashboard),
+                            withHormoneCheck: true,
+                            // Meals are in Today's insights now.
+                            showMeals: false,
+                          ),
+                        ),
+                        4,
                       ),
                       const SizedBox(height: 8),
-                      // Meals now lives in the stats row above (with
-                      // calories), so the cycle card has this row to itself.
-                      if (hasCycle) PaidCycleCard(dashboard: dashboard),
+                      // Row 2: Cycle, with the health check beside it once
+                      // she has joined a class this week (Classes then sits
+                      // next to Weight in the row above, Oct 2026).
+                      // Row 2: Cycle on its own (Weight · Classes · Health
+                      // check share row 1, Oct 2026).
+                      if (hasCycle)
+                        _enter(PaidCycleCard(dashboard: dashboard), 5)
+                      else if (!isTrialDay1)
+                        _enter(
+                          Obx(() {
+                            // No period date: locked Cycle tile.
+                            if (!ProfileCompletion.to.periodLocked) return const SizedBox.shrink();
+                            return ProfileLockedCard(
+                              title: 'Cycle',
+                              body: 'See your phase and when your next period comes.',
+                              action: 'Add your period date',
+                              onTap: ProfileCompletion.to.openPeriod,
+                            );
+                          }),
+                          5,
+                        ),
+                      if (isTrialDay1)
+                        _enter(
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(8, 10, 8, 2),
+                            child: const Text(
+                              'More tools unlock from Day 2: Hormone check, weekly progress',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontFamily: 'Poppins',
+                                fontSize: 11.5,
+                                color: Color(0xFF8A9A88),
+                              ),
+                            ),
+                          ),
+                          5,
+                        ),
                       const SizedBox(height: 8),
-                      PaidFooter(dashboard: dashboard),
+                      _enter(PaidFooter(dashboard: dashboard), 6),
                     ],
                   ),
                 ),
@@ -436,5 +597,247 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
           ),
         );
     });
+  }
+}
+
+/// First-load placeholder for the paid home: grey shapes laid out like the
+/// real hero (top bar, greeting, live card, coming-up tiles) and the first
+/// cards below, with a soft moving shine (still when reduce-motion is on).
+class _PaidHomeSkeleton extends StatelessWidget {
+  const _PaidHomeSkeleton();
+
+  static const Color _heroBg = Color(0xFF163220);
+  static const Color _dark = FhSkeleton.onDark;
+
+  Widget _frac(double f, double h, {double top = 0, Color color = FhSkeleton.light, double radius = 6}) {
+    return Padding(
+      padding: EdgeInsets.only(top: top),
+      child: FractionallySizedBox(
+        alignment: Alignment.centerLeft,
+        widthFactor: f,
+        child: FhSkeleton(height: h, color: color, radius: radius),
+      ),
+    );
+  }
+
+  Widget _card({required Widget child, EdgeInsets padding = const EdgeInsets.all(12)}) {
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFD8EDD4)),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _hero(BuildContext context) {
+    final top = MediaQuery.of(context).padding.top;
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: _heroBg,
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(36),
+          bottomRight: Radius.circular(36),
+        ),
+      ),
+      child: FhSkeletonShine(
+        color: Colors.white.withOpacity(0.13),
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(22, top + 14, 22, 18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Top bar: bell + avatar.
+              Row(
+                children: const [
+                  FhSkeleton.circle(size: 30, color: _dark),
+                  Spacer(),
+                  FhSkeleton.circle(size: 30, color: _dark),
+                ],
+              ),
+              const SizedBox(height: 18),
+              // Greeting.
+              const FhSkeleton(width: 140, height: 10, color: _dark),
+              const SizedBox(height: 14),
+              const FhSkeleton(width: 240, height: 30, radius: 8, color: _dark),
+              const SizedBox(height: 16),
+              const FhSkeleton(width: 210, height: 11, color: _dark),
+              const SizedBox(height: 18),
+              Container(height: 1, color: Colors.white.withOpacity(0.06)),
+              const SizedBox(height: 14),
+              // Live class card.
+              const FhSkeleton(width: 56, height: 15, radius: 20, color: _dark),
+              const SizedBox(height: 11),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        FhSkeleton(width: 180, height: 21, color: _dark),
+                        SizedBox(height: 6),
+                        FhSkeleton(width: 150, height: 12, color: _dark),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  const FhSkeleton(width: 104, height: 44, radius: 16, color: _dark),
+                ],
+              ),
+              const SizedBox(height: 18),
+              // Coming-up tiles.
+              Row(
+                children: [
+                  for (int i = 0; i < 3; i++) ...[
+                    if (i > 0) const SizedBox(width: 7),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.03),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.white.withOpacity(0.06)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _frac(0.85, 10, color: _dark),
+                            _frac(0.6, 9, top: 7, color: _dark),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _body() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: FhSkeletonShine(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Expert card.
+            _card(
+              child: Row(
+                children: [
+                  const FhSkeleton(width: 42, height: 42, radius: 12),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _frac(0.7, 12),
+                        _frac(0.85, 10, top: 6),
+                        _frac(0.5, 9, top: 6),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const FhSkeleton(width: 66, height: 40, radius: 14),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            // Insight card.
+            _card(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _frac(0.4, 12),
+                  _frac(0.8, 15, top: 12),
+                  _frac(1, 10, top: 8),
+                  _frac(0.9, 10, top: 6),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            // Today's insights box.
+            _card(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _frac(0.45, 13),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      for (int i = 0; i < 3; i++) ...[
+                        if (i > 0) const SizedBox(width: 8),
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.fromLTRB(10, 9, 8, 10),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: const Color(0xFFE3EFE0)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _frac(0.7, 10),
+                                _frac(0.6, 15, top: 8),
+                                _frac(0.8, 8, top: 6),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            // Stats row.
+            Row(
+              children: [
+                for (int i = 0; i < 3; i++) ...[
+                  if (i > 0) const SizedBox(width: 7),
+                  Expanded(
+                    child: _card(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 11),
+                      child: Column(
+                        children: const [
+                          FractionallySizedBox(widthFactor: 0.7, child: FhSkeleton(height: 9)),
+                          SizedBox(height: 6),
+                          FractionallySizedBox(widthFactor: 0.5, child: FhSkeleton(height: 20)),
+                          SizedBox(height: 5),
+                          FractionallySizedBox(widthFactor: 0.6, child: FhSkeleton(height: 8)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Not scrollable on purpose: it is only on screen for a moment.
+    return SingleChildScrollView(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          _hero(context),
+          _body(),
+        ],
+      ),
+    );
   }
 }

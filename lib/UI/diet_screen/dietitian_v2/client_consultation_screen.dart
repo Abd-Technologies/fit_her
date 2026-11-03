@@ -1,3 +1,8 @@
+import '../../../values/constants.dart';
+import '../../../data/api_provider/api_provider.dart';
+import '../../../data/controllers/auth_controller/auth_controller.dart';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -135,9 +140,17 @@ class _ProfileTabState extends State<_ProfileTab> {
     setState(() => _loading = true);
     final raw = await widget.ctrl.loadClientProfileRaw(widget.userId);
     if (!mounted) return;
+    // Parse outside setState and never let a bad field throw — that used
+    // to leave this tab spinning forever.
+    PreConsultationProfile? parsed;
+    try {
+      parsed = raw == null ? null : PreConsultationProfile.fromJson(raw);
+    } catch (_) {
+      parsed = null;
+    }
     setState(() {
       _raw = raw;
-      _profile = raw == null ? null : PreConsultationProfile.fromJson(raw);
+      _profile = parsed;
       _loading = false;
     });
   }
@@ -173,6 +186,12 @@ class _ProfileTabState extends State<_ProfileTab> {
     if (raw == null) return const [];
     final c = raw['dietitianComments'];
     if (c is List) return c;
+    if (c is String && c.trim().isNotEmpty) {
+      try {
+        final v = jsonDecode(c);
+        if (v is List) return v;
+      } catch (_) {}
+    }
     return const [];
   }
 
@@ -234,6 +253,8 @@ class _ProfileTabState extends State<_ProfileTab> {
           _Section(
               title: 'Medical conditions',
               body: _bodyOrEmpty(p.medicalConditions)),
+          // Symptom check results (PCOS / thyroid / … screening in the app).
+          _ScreeningSection(userId: widget.userId),
           _Section(
               title: 'Cycle / reproductive',
               body: _bodyOrEmpty(_humanise(p.pregnancyMenstrualStatus))),
@@ -993,5 +1014,113 @@ class _ProgressCard extends StatelessWidget {
     final local = dt.toLocal();
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     return '${local.day} ${months[local.month - 1]} ${local.year}';
+  }
+}
+
+
+/// Dietitian view of her in-app symptom checks (latest per condition,
+/// highest risk first). Data: GET /admin/healthScreening/:userId.
+class _ScreeningSection extends StatefulWidget {
+  final int userId;
+  const _ScreeningSection({required this.userId});
+  @override
+  State<_ScreeningSection> createState() => _ScreeningSectionState();
+}
+
+class _ScreeningSectionState extends State<_ScreeningSection> {
+  List<Map<String, dynamic>> _rows = [];
+  bool _open = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final token = Get.find<AuthController>().sharedPreferences.getString(Constants.accessToken) ?? '';
+      final r = await Get.find<ApiProvider>()
+          .getData('/admin/healthScreening/${widget.userId}', headers: {'accessToken': token});
+      final body = r.body;
+      if (body is Map && body['status'] == '1' && body['data'] is Map && body['data']['results'] is List) {
+        final list = (body['data']['results'] as List)
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        if (mounted) setState(() => _rows = list);
+      }
+    } catch (_) {}
+  }
+
+  String _date(dynamic iso) {
+    final d = DateTime.tryParse('$iso')?.toLocal();
+    if (d == null) return '';
+    return '${d.day}/${d.month}/${d.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_rows.isEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text(
+          'SYMPTOM CHECK (IN APP)',
+          style: TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF7A8C78),
+            letterSpacing: 0.4,
+          ),
+        ),
+        const SizedBox(height: 6),
+        ..._rows.map((r) {
+          final risk = '${r['riskLevel'] ?? 'low'}';
+          final color = risk == 'high'
+              ? const Color(0xFFC2412D)
+              : risk == 'moderate'
+                  ? const Color(0xFFB7791F)
+                  : const Color(0xFF4C6A4B);
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Row(children: [
+              Expanded(
+                child: Text('${r['conditionType']}',
+                    style: const TextStyle(
+                        fontFamily: 'Poppins', fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF1A3A22))),
+              ),
+              Text(risk[0].toUpperCase() + risk.substring(1),
+                  style: TextStyle(fontFamily: 'Poppins', fontSize: 13, fontWeight: FontWeight.w700, color: color)),
+              const SizedBox(width: 8),
+              Text(_date(r['takenAt']),
+                  style: const TextStyle(fontFamily: 'Poppins', fontSize: 12, color: Color(0xFF7A8C78))),
+            ]),
+          );
+        }),
+        TextButton(
+          onPressed: () => setState(() => _open = !_open),
+          style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 30)),
+          child: Text(_open ? 'Hide her answers' : 'Show her answers',
+              style: const TextStyle(fontFamily: 'Poppins', fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF4C6A4B))),
+        ),
+        if (_open)
+          ..._rows.where((r) => r['answers'] is Map).map((r) {
+            final a = Map<String, dynamic>.from(r['answers'] as Map);
+            return Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 6),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${r['conditionType']}',
+                    style: const TextStyle(fontFamily: 'Poppins', fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF1A3A22))),
+                ...a.entries.map((e) => Text('Q${(int.tryParse(e.key) ?? 0) + 1}: ${e.value}',
+                    style: const TextStyle(fontFamily: 'Poppins', fontSize: 12, color: Color(0xFF5A6B58), height: 1.4))),
+              ]),
+            );
+          }),
+      ]),
+    );
   }
 }

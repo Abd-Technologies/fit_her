@@ -1,4 +1,10 @@
+import '../utils/trial_join_window.dart';
+import '../zoom_meeting.dart';
 import 'package:fitness_zone_2/data/controllers/auth_controller/auth_controller.dart';
+import 'new_home/trial_cta_card.dart' show showTrialStartDialog;
+import '../UI/free_trail/trial_summary_screen.dart';
+import 'class_reminder/class_reminder_flow.dart';
+import 'class_details_sheet.dart';
 import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.dart';
 import 'package:fitness_zone_2/data/controllers/motivation_controller/motivation_controller.dart';
 import 'package:fitness_zone_2/data/controllers/workout_controller/work_out_controller.dart';
@@ -7,7 +13,6 @@ import 'package:fitness_zone_2/data/services/youtube_tutorial_service.dart';
 import 'package:fitness_zone_2/utils/app_clock.dart';
 import 'package:fitness_zone_2/utils/slot_input_builder.dart';
 import 'package:fitness_zone_2/utils/slot_ui_state.dart';
-import 'package:fitness_zone_2/widgets/review_bottom_sheet.dart';
 import 'package:fitness_zone_2/widgets/toasts.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -26,6 +31,8 @@ import '../values/my_colors.dart';
 import '../values/my_imgs.dart';
 import '../helper/analytics_helper.dart';
 import 'custom_button.dart';
+import 'anim/brand_loader.dart';
+import 'class_joining_screen.dart';
 import 'package:intl/intl.dart';
 
 enum StatusType {
@@ -120,7 +127,9 @@ class HelpingWidgets {
           fontSize: 24.sp,
           fontWeight: FontWeight.w500,
           //  fontStyle: FontStyle.normal,
-          fontFamily: "Roboto"),
+          // Was "Roboto", which isn't in the app (iPhone showed another
+          // font). Poppins is the app's font (Oct 2026).
+          fontFamily: "Poppins"),
     );
   }
 
@@ -317,7 +326,8 @@ class HelpingWidgets {
     Function()? secondButtonTap,
   }) {
     var textTheme = Theme.of(context).textTheme;
-    showDialog(
+    // Returned so callers can wait for it to close (pop-up manager).
+    return showDialog(
         context: context,
         builder: (context) => Dialog(
               child: Container(
@@ -422,10 +432,15 @@ class HelpingWidgets {
     final mins = (state == SlotUIState.upcomingSoon && input != null)
         ? minutesUntilStart(input.start, AppClock.now())
         : null;
-    final presentation = presentationForState(
+    final presentation = applyTrialJoinWindow(
+      presentationForState(
+        state,
+        minutesUntilStart: mins,
+        blockReason: blockReasonFor(access),
+      ),
       state,
-      minutesUntilStart: mins,
-      blockReason: blockReasonFor(access),
+      start: input?.start,
+      slotId: slot?.id,
     );
 
     showModalBottomSheet(
@@ -437,113 +452,18 @@ class HelpingWidgets {
       ),
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (BuildContext sheetContext) {
-        final textTheme = Theme.of(sheetContext).textTheme;
-        return SafeArea(
-          top: false,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.keyboard_arrow_down, size: 32),
-                if (state == SlotUIState.cancelled)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    child: Text('This class was cancelled.',
-                        style: TextStyle(
-                            color: Colors.redAccent, fontWeight: FontWeight.w600)),
-                  ),
-                if (state == SlotUIState.endedNotAttended)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                    child: Text('You missed this session.',
-                        style: TextStyle(
-                            color: Colors.grey, fontWeight: FontWeight.w600)),
-                  ),
-                const SizedBox(height: 16),
-                const Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    Column(
-                      children: [
-                        Icon(Icons.access_time, color: Colors.green, size: 32),
-                        SizedBox(height: 8),
-                        Text(
-                          '50 Min',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text('Time'),
-                      ],
-                    ),
-                    Column(
-                      children: [
-                        Icon(Icons.local_fire_department,
-                            color: Colors.green, size: 32),
-                        SizedBox(height: 8),
-                        Text(
-                          '254',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text('Calories'),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Text(
-                    slot?.description ?? "",
-                    style: textTheme.bodySmall,
-                    maxLines: 4,
-                  ),
-                ),
-                const Divider(),
-                ListTile(
-                  leading: const Icon(Icons.access_time_sharp),
-                  title: Text(
-                    '${slot?.start}-${slot?.end}',
-                    style: textTheme.bodySmall,
-                  ),
-                  visualDensity: const VisualDensity(vertical: -4),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.fitness_center),
-                  title: Text(slot?.level ?? 'High Intensity Workout Session',
-                      style: textTheme.bodySmall),
-                  visualDensity: const VisualDensity(vertical: -4),
-                ),
-                ListTile(
-                  leading: const CircleAvatar(
-                    backgroundImage: AssetImage(MyImgs.profilePicture),
-                    maxRadius: 10,
-                  ),
-                  title: Text(
-                      'with ${slot?.trainer?.firstName} ${slot?.trainer?.lastName}',
-                      style: textTheme.bodySmall),
-                  visualDensity: const VisualDensity(vertical: -4),
-                ),
-                const SizedBox(height: 16),
-                if (presentation.appearance != SlotButtonAppearance.hidden)
-                  _buildPopupActionButton(
-                    context: sheetContext,
-                    slot: slot,
-                    anchorDate: anchor,
-                    presentation: presentation,
-                    homeController: homeController,
-                  ),
-                const SizedBox(height: 16),
-              ],
+      backgroundColor: Colors.white,
+      // Oct 2026 redesign: real length, class name, trainer, and one action
+      // area (remind / wait / join / nothing). widgets/class_details_sheet.dart
+      builder: (BuildContext sheetContext) => slot == null
+          ? const SizedBox(height: 120)
+          : ClassDetailsSheet(
+              slot: slot,
+              state: state,
+              presentation: presentation,
+              anchor: anchor,
+              homeController: homeController,
             ),
-          ),
-        );
-      },
     );
   }
 
@@ -597,17 +517,15 @@ class HelpingWidgets {
   }) async {
     switch (presentation.action) {
       case SlotButtonAction.joinClass:
-        if (!_canFreeTrialUserJoin(
+        // Trial join window: checked here AND by the server.
+        if (!await trialJoinGate(
           homeController: homeController,
-          slot: slot,
-          anchorDate: anchorDate ?? AppClock.now(),
+          slotId: slot.id,
+          start: slot.start,
+          className: slot.type,
+          trainerName: slot.trainerName,
+          anchorDate: anchorDate,
         )) {
-          // Late: a kind message with her next class, never a dead end.
-          await _showTrialLateSheet(
-            homeController: homeController,
-            slot: slot,
-            anchorDate: anchorDate ?? AppClock.now(),
-          );
           return;
         }
         // First trial class only: "Ready for your first class?".
@@ -616,7 +534,10 @@ class HelpingWidgets {
           if (!go) return;
         }
         final link = slot.trainerLink ?? '';
-        if (link.isEmpty) return;
+        if (link.isEmpty) {
+          AnalyticsHelper.workoutJoinFailed('no_link', slotId: '${slot.id}');
+          return;
+        }
 
         final isTrial = _isFreeTrialUser(homeController);
         final userTier = isTrial ? 'free_trial' : 'paid';
@@ -651,8 +572,8 @@ class HelpingWidgets {
               scheduledStartTime: slot.start,
             );
           }
-          homeController.sharedPreferences.setBool(Constants.giveReview, true);
         } catch (_) {
+          AnalyticsHelper.workoutJoinFailed('launch_error', slotId: '${slot.id}', tier: userTier);
           showError('Could not start the session. Please try again.');
         }
         break;
@@ -663,6 +584,69 @@ class HelpingWidgets {
       case SlotButtonAction.none:
         break;
     }
+  }
+
+  /// Free-trial join window (first N minutes of a class). Used by every
+  /// Join button (schedule, popup, home big card). Checks the app clock
+  /// first, then asks the server (POST /presence/join refuses a late
+  /// trial join with TRIAL_LATE). Shows the kind "next class" sheet and
+  /// returns false when she's too late. Paid users always pass.
+  static Future<bool> trialJoinGate({
+    required HomeController homeController,
+    required int? slotId,
+    required String? start,
+    String? className,
+    String? trainerName,
+    DateTime? anchorDate,
+  }) async {
+    // No package and never started a trial: start the trial instead.
+    if (homeController.hasRealPlan == false &&
+        Get.isRegistered<AuthController>() &&
+        !Get.find<AuthController>().trialActivated.value &&
+        !(homeController.userHomeData?.userAllPlans.any(
+                (p) => p.title.trim().toLowerCase() == 'free trial' && p.remainingDays > 0) ??
+            false)) {
+      AnalyticsHelper.workoutJoinFailed('no_trial', slotId: '$slotId');
+      showTrialStartDialog();
+      return false;
+    }
+    // Trial over and no plan: no free joining — kind sheet + her offer.
+    if (homeController.trialEndedUnpaid) {
+      AnalyticsHelper.workoutJoinFailed('trial_ended', slotId: '$slotId', tier: 'trial_ended');
+      AnalyticsHelper.offerSeen('trial_ended_join');
+      await _showTrialEndedSheet(homeController);
+      return false;
+    }
+    if (!_isFreeTrialUser(homeController)) return true;
+    final anchor = anchorDate ?? AppClock.now();
+    final startAt = parseSlotWallClock(start, anchor);
+    final localLate = startAt == null ||
+        AppClock.now().isAfter(startAt
+            .add(Duration(minutes: homeController.joinWindowMinutes.value)));
+    // Always ask the server: it allows an on-time join, and also a REJOIN
+    // of a class she already joined on time (until the class ends). When
+    // the app clock says she's late, only an explicit OK lets her in.
+    var allowed = !localLate;
+    if (slotId != null && Get.isRegistered<MotivationController>()) {
+      allowed = await Get.find<MotivationController>().classPresenceJoin(
+        slotId: slotId.toString(),
+        className: className,
+        trainerName: trainerName,
+        scheduledStartTime: start,
+        strict: localLate,
+        // Only a check here; "joined" is tracked when Zoom really opens.
+        track: false,
+      );
+    }
+    if (!allowed) {
+      AnalyticsHelper.workoutJoinFailed('trial_late', slotId: '$slotId', tier: 'free_trial');
+      await _showTrialLateSheet(
+        homeController: homeController,
+        start: start,
+        anchorDate: anchor,
+      );
+    }
+    return allowed;
   }
 
   static const String _kFirstClassSheetKey = 'trialFirstClassSheetShown';
@@ -695,16 +679,41 @@ class HelpingWidgets {
     return result == true;
   }
 
+  /// Tapping Join after the free trial ended (no plan yet).
+  static Future<void> _showTrialEndedSheet(HomeController homeController) async {
+    final done = homeController.classesAttended.value;
+    await Get.bottomSheet<void>(
+      _TrialSheet(
+        emoji: '💚',
+        title: 'Your free trial has ended',
+        lines: [
+          done > 0
+              ? 'You showed up for $done class${done == 1 ? '' : 'es'}, amazing. Continue your live classes with a plan.'
+              : 'Continue your live classes with a plan.',
+        ],
+        primaryLabel: 'See plans & my offer',
+        onPrimary: () {
+          AnalyticsHelper.offerTapped('trial_ended_sheet');
+          Get.back();
+          Get.to<dynamic>(() => const TrialSummaryScreen());
+        },
+        secondaryLabel: 'Not now',
+        onSecondary: () => Get.back(),
+      ),
+      isScrollControlled: true,
+    );
+  }
+
   /// Joining too late as a trial user: say why kindly and offer her next
   /// class (with a one-tap reminder) instead of an error.
   static Future<void> _showTrialLateSheet({
     required HomeController homeController,
-    required Slot slot,
+    required String? start,
     required DateTime anchorDate,
   }) async {
-    final start = parseSlotWallClock(slot.start, anchorDate);
+    final startAt = parseSlotWallClock(start, anchorDate);
     final minsLate =
-        start == null ? null : AppClock.now().difference(start).inMinutes;
+        startAt == null ? null : AppClock.now().difference(startAt).inMinutes;
     if (homeController.trialClassData.value == null) {
       await homeController.loadTrialClasses();
     }
@@ -729,9 +738,13 @@ class HelpingWidgets {
         primaryLabel: next != null && next.data['picked'] != true ? 'Remind me' : 'See all classes',
         onPrimary: () async {
           if (next != null && next.data['picked'] != true && nextId is int) {
-            final ok = await homeController.addTrialReminderSlot(nextId);
             Get.back();
-            if (ok) CustomToast.successToast(msg: "We'll remind you before it starts 🔔");
+            // Same rule as home: max 2 times, else swap / just this once.
+            await ClassReminderFlow.request(
+              slotId: nextId,
+              start: '${next.data['startLocal'] ?? ''}',
+              dayOffset: next.today ? 0 : 1,
+            );
           } else {
             Get.back();
           }
@@ -791,21 +804,124 @@ class HelpingWidgets {
       homeController: homeController,
     );
 
-    var success = await Get.find<ZoomMeetingGetxController>().joinMeeting(
-      meetingNumber,
-      displayName,
-      slotId: slotId,
-      className: className,
-      trainerName: trainerName,
-      scheduledStartTime: scheduledStartTime,
-    );
-    if (success) {
-      Future.delayed(Duration(minutes: 5), () {
-        Get.bottomSheet(
-            isScrollControlled: true, FeedbackBottomSheet("0", "0"));
-      });
+    // "Opening your class…" while Zoom signs in / we retry.
+    _showJoiningDialog(className, trainerName);
+    var success = false;
+    // First tap after opening the app often fails because Zoom is still
+    // signing in (Try again then works). So try up to 3 times, quietly,
+    // before showing the "Couldn't open your class" sheet.
+    for (var attempt = 0; attempt < 3 && !success; attempt++) {
+      if (attempt > 0) await Future.delayed(const Duration(milliseconds: 1500));
+      try {
+        success = await Get.find<ZoomMeetingGetxController>().joinMeeting(
+          meetingNumber,
+          displayName,
+          slotId: slotId,
+          className: className,
+          trainerName: trainerName,
+          scheduledStartTime: scheduledStartTime,
+        );
+      } catch (_) {
+        success = false;
+      }
     }
+    _closeJoiningDialog();
+    if (!success) {
+      AnalyticsHelper.workoutJoinFailed('zoom_error ${ZoomMeeting.lastError ?? ''}'.trim(), slotId: slotId);
+      debugPrint('[zoom] join failed: ${ZoomMeeting.lastError}');
+      // Backup: never leave her stuck. Try again, or open the SAME class
+      // in the regular Zoom app.
+      await _showZoomFallbackSheet(
+        meetingNumber: meetingNumber,
+        slotId: slotId,
+        className: className,
+        trainerName: trainerName,
+        scheduledStartTime: scheduledStartTime,
+      );
+      return;
+    }
+    // (The "rate this class" sheet 5 min into class is gone: feedback is
+    // asked once, after the class ends, on home — widgets/class_feedback.)
     Get.find<MotivationController>().markAttendance(slotId: slotId);
+  }
+
+  static bool _joiningOpen = false;
+
+  static void _showJoiningDialog(String? className, [String? trainerName]) {
+    if (_joiningOpen) return;
+    _joiningOpen = true;
+    // Oct 2026: full-screen "Joining live class" wait (was a small white
+    // box) so the seconds Zoom needs to load feel short.
+    Get.dialog(
+      ClassJoiningScreen(
+        className: className,
+        trainerName: trainerName,
+        onClose: _closeJoiningDialog,
+      ),
+      barrierDismissible: false,
+      barrierColor: Colors.transparent,
+      useSafeArea: false,
+    );
+  }
+
+  static void _closeJoiningDialog() {
+    if (!_joiningOpen) return;
+    _joiningOpen = false;
+    if (Get.isDialogOpen ?? false) Get.back();
+  }
+
+  /// Shown when Zoom can't open inside the app.
+  static Future<void> _showZoomFallbackSheet({
+    required String meetingNumber,
+    required String slotId,
+    String? className,
+    String? trainerName,
+    String? scheduledStartTime,
+  }) async {
+    final digits = meetingNumber.replaceAll(RegExp(r'[^0-9]'), '');
+    await Get.bottomSheet<void>(
+      _TrialSheet(
+        emoji: '📹',
+        title: "Couldn't open your class",
+        lines: const [
+          'Your class is live. Tap Try again, or open it in the Zoom app.',
+        ],
+        primaryLabel: 'Open in Zoom app',
+        onPrimary: () async {
+          Get.back();
+          // Join presence first: the Zoom app won't report back to us.
+          if (Get.isRegistered<MotivationController>()) {
+            await Get.find<MotivationController>().classPresenceJoin(
+              slotId: slotId,
+              className: className,
+              trainerName: trainerName,
+              scheduledStartTime: scheduledStartTime,
+            );
+          }
+          final app = Uri.parse('zoomus://zoom.us/join?confno=$digits');
+          final web = Uri.parse('https://zoom.us/j/$digits');
+          try {
+            if (!await launchUrl(app, mode: LaunchMode.externalApplication)) {
+              await launchUrl(web, mode: LaunchMode.externalApplication);
+            }
+          } catch (_) {
+            await launchUrl(web, mode: LaunchMode.externalApplication);
+          }
+        },
+        secondaryLabel: 'Try again',
+        onSecondary: () {
+          Get.back();
+          startMeeting(
+            meetingNumber,
+            slotId,
+            className: className,
+            trainerName: trainerName,
+            scheduledStartTime: scheduledStartTime,
+          );
+        },
+      ),
+      isScrollControlled: true,
+    );
   }
 
   static String _buildMeetingDisplayName({

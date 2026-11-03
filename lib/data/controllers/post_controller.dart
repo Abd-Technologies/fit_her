@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'home_controller/home_controller.dart';
 import 'dart:io';
 import 'package:get/get.dart';
 import 'auth_controller/auth_controller.dart';
@@ -176,53 +177,74 @@ class PostController extends GetxController implements GetxService {
   /// ================================
   /// 🔹 LIKE / UNLIKE POST
   /// ================================
-  likePost(int postId) {
-    // Optimistic: flip the heart and count at once, undo if the call fails.
-    // The socket echo of our own like is ignored (see SocketController).
-    final post = postsList.firstWhereOrNull((p) => p.id == postId);
-    if (post != null) {
-      final nowLiked = !post.isLiked.value;
-      post.isLiked.value = nowLiked;
-      post.likesCount.value =
-          (post.likesCount.value + (nowLiked ? 1 : -1)).clamp(0, 1 << 30);
-    }
+  // Oct 2026: likes are instant and double-taps can't flicker.
+  // Each tap flips the heart at once and records what she wants; only one
+  // request per post runs at a time, and when it returns we send one more
+  // only if the server ended up different from her last tap.
+  final Set<int> _likeBusy = {};
+  final Map<int, bool> _likeWanted = {};
+
+  void _setLiked(Post post, bool liked) {
+    if (post.isLiked.value == liked) return;
+    post.isLiked.value = liked;
+    post.likesCount.value =
+        (post.likesCount.value + (liked ? 1 : -1)).clamp(0, 1 << 30);
+  }
+
+  /// [target] = the exact post on screen (post screen opened from a push
+  /// may not be in the feed list yet).
+  likePost(int postId, {Post? target}) {
+    final post = target ?? postsList.firstWhereOrNull((p) => p.id == postId);
+    if (post == null) return;
+    _setLiked(post, !post.isLiked.value);
+    _likeWanted[postId] = post.isLiked.value;
+    if (_likeBusy.contains(postId)) return; // the running request will catch up
+    _syncLike(post, before: !post.isLiked.value);
+  }
+
+  Future<void> _syncLike(Post post, {required bool before}) async {
+    final id = post.id;
+    _likeBusy.add(id);
     likeLoad.value = false;
-    homeRepo
-        .likePost(
-      accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
-      postId: postId,
-      userId: sharedPreferences.getString(Constants.userId) ?? "0",
-    )
-        .then((response) {
-      var ok = false;
-      if (response.statusCode == 200) {
-        try {
-          final data = jsonDecode(response.bodyString ?? "");
-          ok = data["status"] == "1";
-          if (ok && post != null) {
-            // Trust the server on the final state.
-            final liked = "Like removed" != data["message"];
-            if (post.isLiked.value != liked) {
-              post.isLiked.value = liked;
-              post.likesCount.value =
-                  (post.likesCount.value + (liked ? 1 : -1)).clamp(0, 1 << 30);
+    try {
+      // At most a few rounds (each round = one toggle on the server).
+      for (var round = 0; round < 3; round++) {
+        final response = await homeRepo.likePost(
+          accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
+          postId: id,
+          userId: sharedPreferences.getString(Constants.userId) ?? "0",
+        );
+        bool? serverLiked;
+        if (response.statusCode == 200) {
+          try {
+            final data = jsonDecode(response.bodyString ?? "");
+            if (data["status"] == "1") {
+              serverLiked = "Like removed" != data["message"];
+            } else {
+              CustomToast.failToast(msg: data["message"]);
             }
-          } else if (!ok) {
-            CustomToast.failToast(msg: data["message"]);
-          }
-        } catch (_) {}
-      }
-      if (!ok && post != null) {
-        final back = !post.isLiked.value;
-        post.isLiked.value = back;
-        post.likesCount.value =
-            (post.likesCount.value + (back ? 1 : -1)).clamp(0, 1 << 30);
-        if (response.statusCode != 200) {
-          CustomToast.failToast(msg: "Couldn't update like. Try again.");
+          } catch (_) {}
         }
+        if (serverLiked == null) {
+          // Failed: back to how it was before her taps.
+          _setLiked(post, before);
+          if (response.statusCode != 200) {
+            CustomToast.failToast(msg: "Couldn't update like. Try again.");
+          }
+          return;
+        }
+        final wanted = _likeWanted[id] ?? serverLiked;
+        if (serverLiked == wanted) {
+          _setLiked(post, serverLiked);
+          return;
+        }
+        // She tapped again while this was on its way: send one more.
       }
+    } finally {
+      _likeBusy.remove(id);
+      _likeWanted.remove(id);
       likeLoad.value = true;
-    });
+    }
   }
 
   /// ================================
@@ -271,11 +293,43 @@ class PostController extends GetxController implements GetxService {
     final auth = Get.find<AuthController>();
     final type = auth.logInUser?.userType;
     if (type != null && type != 'User') return true;
+    // Real paid package only — free trial (running or ended) can like but
+    // not post/comment. The account "status" flag alone isn't enough: it
+    // can be on during and after a trial. Same rule as the server.
+    if (Get.isRegistered<HomeController>()) {
+      final real = Get.find<HomeController>().hasRealPlan;
+      if (real != null) return real;
+    }
     return auth.logInUser?.status == true;
   }
 
   /// Sends a reply and adds it to the post at once. Returns true on success.
   Future<bool> sendReplyNow({required int postId, required String message}) async {
+    // Oct 2026: her reply shows at once ("Sending…"), then is swapped for
+    // the saved one; removed again if it couldn't be sent.
+    final post = postsList.firstWhereOrNull((p) => p.id == postId);
+    Reply? temp;
+    if (post != null) {
+      final me = Get.find<AuthController>().logInUser;
+      final name = '${me?.firstName ?? ''} ${me?.lastName ?? ''}'.trim();
+      temp = Reply(
+        id: -DateTime.now().millisecondsSinceEpoch,
+        postId: postId,
+        userId: me?.id ?? 0,
+        message: message,
+        createdAt: DateTime.now(),
+        author: FeedAuthor(
+          id: me?.id,
+          name: name.isEmpty ? 'Me' : name,
+          userType: me?.userType,
+        ),
+        pending: true,
+      );
+      post.replies.add(temp);
+    }
+    void dropTemp() {
+      if (post != null && temp != null) post.replies.removeWhere((x) => x.id == temp!.id);
+    }
     replySendLoad.value = false;
     final response = await homeRepo.sendReply(
       accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
@@ -289,18 +343,25 @@ class PostController extends GetxController implements GetxService {
       final res = jsonDecode(response.bodyString ?? "");
       if (code >= 200 && code < 300 && res["status"] == "1") {
         final r = res["data"]?["reply"];
-        final post = postsList.firstWhereOrNull((p) => p.id == postId);
         if (r is Map<String, dynamic> && post != null) {
           final reply = Reply.fromJson(r);
-          if (!post.replies.any((x) => x.id == reply.id)) {
+          final i = temp == null ? -1 : post.replies.indexWhere((x) => x.id == temp!.id);
+          if (post.replies.any((x) => x.id == reply.id)) {
+            dropTemp(); // the live update already added it
+          } else if (i >= 0) {
+            post.replies[i] = reply;
+          } else {
             post.replies.add(reply);
-            postsList.refresh();
           }
+        } else {
+          dropTemp();
         }
         return true;
       }
+      dropTemp();
       CustomToast.failToast(msg: res["message"] ?? "Couldn't send. Try again.");
     } catch (_) {
+      dropTemp();
       CustomToast.failToast(msg: "Couldn't send. Try again.");
     }
     return false;

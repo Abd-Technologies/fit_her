@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../helper/app_update_checker.dart';
 import 'dart:math' as math;
 import 'package:fitness_zone_2/UI/auth_module/walt_through/walk_through_screenn.dart';
 import 'package:fitness_zone_2/data/services/notification_scheduler.dart';
@@ -11,7 +12,9 @@ import 'package:get/get.dart';
 import '../../data/api_provider/app_link_handler.dart';
 import '../../data/controllers/auth_controller/auth_controller.dart';
 import '../../values/constants.dart';
+import '../../helper/consult_presence.dart';
 import '../../values/my_imgs.dart';
+import 'package:fitness_zone_2/widgets/anim/splash_intro.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({Key? key}) : super(key: key);
@@ -23,7 +26,8 @@ class SplashScreen extends StatefulWidget {
 class _SplashScreenState extends State<SplashScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   // ── Colors from Light Green HTML variant ──
-  static const Color _bg = Color(0xFFEAF7E4);
+  // White background; only the corner bubbles stay green (Oct 2026).
+  static const Color _bg = Colors.white;
   static const Color _circleColor = Color(0xFFC8E8C0);
   static const Color _dividerColor = Color(0xFFC8E8C0);
   static const Color _textDark = Color(0xFF163220);
@@ -38,6 +42,21 @@ class _SplashScreenState extends State<SplashScreen>
     Color(0xFFA8F0C0), // mint
     Color(0xFFFAC775), // gold
   ];
+
+  // The 4 dots' keys: before leaving, their screen positions are handed to
+  // the Welcome ring, which flies them out and draws itself from them.
+  final List<GlobalKey> _dotKeys = List.generate(4, (_) => GlobalKey());
+
+  void _handDotsToWelcome() {
+    if (MediaQuery.maybeOf(context)?.disableAnimations ?? false) return;
+    final pts = <Offset>[];
+    for (final k in _dotKeys) {
+      final box = k.currentContext?.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize || !box.attached) return;
+      pts.add(box.localToGlobal(box.size.center(Offset.zero)));
+    }
+    SplashIntro.set(pts);
+  }
 
   // ── Animation controllers ──
   late final AnimationController _circleController;
@@ -67,11 +86,27 @@ class _SplashScreenState extends State<SplashScreen>
     _runAnimationSequence();
 
     // ── Original navigation logic ──
-    NotificationServices().requestNotificationPermission();
+    // No permission box on the splash any more (Oct 2026): the main tabs
+    // show our own "Turn on notifications" sheet first.
+    NotificationServices().syncTokenIfAllowed();
     // Use the widget's own context (safer than Get.context!, which can
     // be null or stale during navigation transitions).
+    // Phone notifications: set up once, here (tap routing + channel).
+    NotificationServices.ensureLocalNotifications();
     NotificationServices().firebaseInit(context);
     NotificationScheduler.initialize();
+    // App update popup: checked once per cold start, after the first
+    // screen is up (see helper/app_update_checker.dart / fitHer Flows).
+    Future.delayed(const Duration(seconds: 4), AppUpdateChecker.check);
+    // Nov 2026: she may have left a consultation call while Fit Her was
+    // closed: report that she's back (helper/consult_presence.dart).
+    Future.delayed(const Duration(seconds: 3), () {
+      try {
+        if (Get.find<AuthController>().loginAsA.value == Constants.user) {
+          ConsultPresence.instance.start();
+        }
+      } catch (_) {}
+    });
 
     _navigationTimer = Timer(const Duration(seconds: 3), () async {
       // Bail out if the user backgrounded the app or the splash already
@@ -89,7 +124,16 @@ class _SplashScreenState extends State<SplashScreen>
 
         if (email == null || password == null || loginAsa == null) {
           if (!mounted) return;
-          Get.offAll(() => const WalkThroughScreen());
+          // The 4 dots fly on into the Welcome ring (see SplashIntro).
+          _handDotsToWelcome();
+          Get.offAll(
+          () => const WalkThroughScreen(),
+          // Quick soft fade: the splash text goes, the dots stay in place
+          // and then build the ring on the Welcome screen.
+          transition: Transition.fadeIn,
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeOutCubic,
+        );
 
           // Init the deep-link handler one second after the new screen
           // has mounted. We store the Timer so dispose() can cancel it.
@@ -110,7 +154,13 @@ class _SplashScreenState extends State<SplashScreen>
             // Only fall back if we are STILL the active route — i.e.
             // login never navigated us anywhere.
             if (Get.currentRoute == '/') {
-              Get.offAll(() => const WalkThroughScreen());
+              Get.offAll(
+          () => const WalkThroughScreen(),
+          // Smooth hand-off from the splash: soft fade, no slide.
+          transition: Transition.fadeIn,
+          duration: const Duration(milliseconds: 650),
+          curve: Curves.easeOutCubic,
+        );
             }
           });
 
@@ -139,7 +189,13 @@ class _SplashScreenState extends State<SplashScreen>
         // so they're never stranded on a frozen splash.
         debugPrint('SplashScreen navigation error: $e\n$stack');
         if (!mounted) return;
-        Get.offAll(() => const WalkThroughScreen());
+        Get.offAll(
+          () => const WalkThroughScreen(),
+          // Smooth hand-off from the splash: soft fade, no slide.
+          transition: Transition.fadeIn,
+          duration: const Duration(milliseconds: 650),
+          curve: Curves.easeOutCubic,
+        );
       }
     });
   }
@@ -317,8 +373,8 @@ class _SplashScreenState extends State<SplashScreen>
                       padding: EdgeInsets.only(bottom: 28.h),
                       child: Column(
                         children: [
-                          _buildLoader(),
-                          SizedBox(height: 7.h),
+                          // Bottom loader removed: the 4 cycle dots
+                          // under the tagline are the loader now.
                           _buildVersionText(),
                         ],
                       ),
@@ -495,13 +551,10 @@ class _SplashScreenState extends State<SplashScreen>
   // ── 4 cycle dots pop in one by one and float gently ──
   Widget _buildCycleDots() {
     return AnimatedBuilder(
-      animation: Listenable.merge([_dotsController, _sideBounceController]),
+      // The 4 cycle dots ARE the loading animation now: they pop in one
+      // by one, then bounce in a wave (pink → green → mint → gold).
+      animation: Listenable.merge([_dotsController, _loaderController]),
       builder: (context, _) {
-        final bounceVal = CurvedAnimation(
-          parent: _sideBounceController,
-          curve: Curves.easeInOutSine,
-        ).value;
-        final floatY = (bounceVal - 0.5) * 3.h;
 
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -514,13 +567,20 @@ class _SplashScreenState extends State<SplashScreen>
                 curve: Interval(start, end, curve: Curves.elasticOut),
               ),
             );
+            // Wave bounce (same feel as the old bottom loader).
+            final double t = _loaderController.value;
+            final double phase = (t - (i * 0.15)) % 1.0;
+            final double wave = (phase >= 0.0 && phase <= 0.5)
+                ? math.sin(phase / 0.5 * math.pi)
+                : 0.0;
             return Padding(
               padding: EdgeInsets.symmetric(horizontal: 4.w),
               child: Transform.translate(
-                offset: Offset(0, floatY),
+                offset: Offset(0, -7.h * wave),
                 child: Transform.scale(
-                  scale: dotScale.value,
+                  scale: dotScale.value * (1.0 + 0.3 * wave),
                   child: Container(
+                    key: _dotKeys[i],
                     width: 7.w,
                     height: 7.w,
                     decoration: BoxDecoration(

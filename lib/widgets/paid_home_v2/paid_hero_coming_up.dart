@@ -74,7 +74,7 @@ class _PaidHeroComingUpState extends State<PaidHeroComingUp> {
     }
     if (widget.comingUp.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(12, 14, 12, 18),
+        padding: const EdgeInsets.fromLTRB(22, 16, 22, 20),
         child: Text(
           'No upcoming classes',
           textAlign: TextAlign.center,
@@ -90,7 +90,7 @@ class _PaidHeroComingUpState extends State<PaidHeroComingUp> {
     final now = DateTime.now();
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 14, 12, 18),
+      padding: const EdgeInsets.fromLTRB(22, 16, 22, 20),
       child: Row(
         children: [
           for (int i = 0; i < widget.comingUp.length; i++) ...[
@@ -135,7 +135,12 @@ class _Tile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final countdown = _minutesUntilStart(item, now);
+    // Nov 2026: today's class the trainer cancelled shows "Cancelled"
+    // (it kept counting down "Starts in 5m"). Only today's: the slot row
+    // is shared with next week, which is still on.
+    final bool cancelledToday =
+        (item.status ?? '').trim() == 'Cancelled' && (item.dayOffset ?? 0) == 0;
+    final countdown = cancelledToday ? null : _minutesUntilStart(item, now);
     // Show "Starts in Xm" badge when within 20 min of today's class --
     // matches slot_ui_state.dart's _kSoonWindow so this tile and the
     // shared resolver never disagree on when "soon" starts.
@@ -153,7 +158,7 @@ class _Tile extends StatelessWidget {
       // needs a way back to Home.
       onTap: () => Get.to(() => WorkPlansOfUser(showBackButton: true)),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           color: palette.base.withOpacity(palette.bgOpacity),
           border: Border.all(
@@ -178,7 +183,22 @@ class _Tile extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 4),
-            if (showCountdown) ...[
+            if (cancelledToday) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE07B7B).withOpacity(0.22),
+                  borderRadius: BorderRadius.circular(100),
+                  border: Border.all(color: const Color(0xFFE07B7B).withOpacity(0.5), width: 1),
+                ),
+                child: const Text(
+                  'Cancelled today',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: Color(0xFFF2A7A7)),
+                ),
+              ),
+            ] else if (showCountdown) ...[
               // "Starts in Xm" badge — amber pill matching the workout screen.
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),

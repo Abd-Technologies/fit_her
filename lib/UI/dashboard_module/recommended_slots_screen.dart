@@ -13,6 +13,7 @@ import 'package:fitness_zone_2/widgets/recommended_badge.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class RecommendedSlotsScreen extends StatefulWidget {
   const RecommendedSlotsScreen({super.key});
@@ -179,7 +180,7 @@ class _RecommendedSlotsScreenState extends State<RecommendedSlotsScreen> {
         Get.back();
       }, text: "Recommended for You"),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+          ? const Center(child: FhLoader())
           : _slots.isEmpty
               ? _buildEmptyState(textTheme)
               : ListView(

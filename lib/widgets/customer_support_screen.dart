@@ -144,7 +144,8 @@ class CustomerSupportScreen extends StatelessWidget {
                 ),
                 SizedBox(height: 2.h),
                 Text(
-                  'Generate & share 3-day free trial deep links',
+                  // No day count here: the trial length is set by admin.
+                  'Generate & share free trial deep links',
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 11.sp,

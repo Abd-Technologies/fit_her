@@ -66,28 +66,45 @@ class _FeedScreenState extends State<FeedScreen> {
               return RefreshIndicator(
                 color: kFeedGreen,
                 onRefresh: () async => controller.getAllPosts(silent: true),
-                child: ListView(
+                // Oct 2026: builds only the posts on screen (+ a little
+                // ahead), so pictures load as she scrolls instead of all
+                // 300 at once.
+                child: ListView.builder(
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: EdgeInsets.fromLTRB(16.w, 12.h, 16.w, 24.h),
-                  children: [
-                    _header(),
-                    SizedBox(height: 14.h),
-                    controller.canPost ? _composer() : _lockedComposer(),
-                    SizedBox(height: 8.h),
-                    if (loading)
-                      Padding(
+                  cacheExtent: 800,
+                  itemCount: 1 + ((loading || posts.isEmpty) ? 1 : posts.length),
+                  itemBuilder: (context, index) {
+                    if (index == 0) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _header(),
+                          SizedBox(height: 14.h),
+                          controller.canPost ? _composer() : _lockedComposer(),
+                          SizedBox(height: 8.h),
+                        ],
+                      );
+                    }
+                    if (loading) {
+                      return Padding(
                         padding: EdgeInsets.only(top: 60.h),
                         child: const Center(child: CircularProgress()),
-                      )
-                    else if (posts.isEmpty)
-                      _empty()
-                    else
-                      for (int i = 0; i < posts.length; i++) ...[
-                        _FeedPostTile(post: posts[i]),
+                      );
+                    }
+                    if (posts.isEmpty) return _empty();
+                    final i = index - 1;
+                    final p = posts[i];
+                    return Column(
+                      key: ValueKey('post_${p.id}'),
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _FeedPostTile(post: p),
                         if (i < posts.length - 1)
                           Divider(height: 1, thickness: 1, color: kFeedBorder.withOpacity(0.7)),
                       ],
-                  ],
+                    );
+                  },
                 ),
               );
             }),

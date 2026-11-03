@@ -1,6 +1,10 @@
+import '../../../widgets/trial_moments/trial_moments.dart';
+import '../../../helper/consult_presence.dart';
 import 'dart:convert';
 import '../consultation_controller/consultation_controller.dart';
 import '../../../UI/auth_module/sign_up_screen/life_stage_gate.dart';
+import '../../../UI/auth_module/sign_up_screen/sign_up_screen_questions.dart';
+import '../../../helper/signup_progress.dart';
 import 'dart:io';
 import 'package:fitness_zone_2/UI/auth_module/login/login.dart';
 import 'package:fitness_zone_2/UI/auth_module/result_screen.dart';
@@ -9,6 +13,7 @@ import 'package:fitness_zone_2/UI/auth_module/walt_through/walk_through_screenn.
 import 'package:fitness_zone_2/UI/auth_module/time_preference_screen.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/bottom_bar_screen/bottom_bar_screen.dart';
 import 'package:fitness_zone_2/widgets/new_home/trial_cta_card.dart';
+import 'package:fitness_zone_2/UI/free_trail/trial_onboarding_screen.dart' show savedTrialOnboardingStep;
 import 'package:fitness_zone_2/data/api_provider/api_provider.dart';
 import 'package:fitness_zone_2/data/api_provider/chat_api_provider.dart';
 import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.dart';
@@ -55,6 +60,8 @@ import 'package:firebase_auth/firebase_auth.dart' as fAuth;
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../models/get_all_users/get_all_users_based_on_type.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
+import '../../services/notification_scheduler.dart';
 
 class AuthController extends GetxController implements GetxService {
   SharedPreferences sharedPreferences;
@@ -145,10 +152,31 @@ class AuthController extends GetxController implements GetxService {
   void markPaid() {
     final u = logInUser;
     if (u == null) return;
+    // Already marked paid: nothing to re-read. Without this, the plans
+    // reload below called markPaid() again (HomeController.getUserHomeFunc
+    // sees a paid plan), which reloaded again... an endless loop of
+    // dashboard + /trial/me + userHome calls (Oct 2026).
+    final already = u.status == true && isPaid.value;
     u.status = true;
     u.useNewPaidHome = true;
     sharedPreferences.setBool(Constants.useNewPaidHomeKey, true);
     isPaid.value = true;
+    if (already) return;
+    // Oct 2026: re-read her trial (the server marks it converted on
+    // payment) so the "N-day free trial" cards go away without logout.
+    if (Get.isRegistered<HomeController>()) {
+      final home = Get.find<HomeController>();
+      home.getMyTrialJourney();
+      // Oct 2026: also re-read her plans. Home picks the paid home only
+      // when it sees a real (paid) plan; with the old list it kept
+      // showing the free home until she logged out and in again.
+      home.getUserHomeFunc(silent: true, forceRefresh: true);
+    }
+    try {
+      if (Get.isRegistered<PaidHomeController>()) {
+        Get.find<PaidHomeController>().refreshDashboard();
+      }
+    } catch (_) {}
   }
 
   /// Mirrors [markPaid] for the opposite direction: after a successful
@@ -230,6 +258,11 @@ class AuthController extends GetxController implements GetxService {
     // so this single call ties all future events to the real backend user
     // instead of an anonymous per-install id.
     AnalyticsHelper.setUserId(model.id.toString());
+    // Who she is in Mixpanel (no names): every chart can be split by these.
+    AnalyticsHelper.setProfile({
+      'user_type': loginAsA.value.toLowerCase(),
+      'plan_state': model.status ? 'paid' : 'none',
+    });
     sharedPreferences.setString(Constants.email, model.email.toString());
     sharedPreferences.setString(Constants.password, password);
     sharedPreferences.setString(Constants.loginAsa, loginAsA.value);
@@ -257,12 +290,23 @@ class AuthController extends GetxController implements GetxService {
     sharedPreferences.setString(Constants.userTimeZoneKey, model.timeZone);
     // Kick the sync service. Idempotent — safe to call after every
     // login (Email/Password, Google, Apple, etc.).
+    // Nov 2026: consultation leave time (helper/consult_presence.dart).
+    if (loginAsA.value == Constants.user) ConsultPresence.instance.start();
     try {
       Get.find<TimezoneSyncService>().start();
     } catch (_) {
       // DI not ready (cold-start race) — service will be wired up the
       // next time addLocalStorage runs.
     }
+  }
+
+  /// Her user id as text. Falls back to the saved id while `logInUser` is
+  /// still loading after a cold start (Nov 2026: the feed loaded first,
+  /// her own likes looked like someone else's and were counted twice).
+  String get myId {
+    final id = logInUser?.id;
+    if (id != null) return '$id';
+    return sharedPreferences.getString(Constants.userId) ?? '';
   }
 
   /// Phase F.3 — IANA zone the dietitian set on `User.timeZone`. In-memory
@@ -293,7 +337,7 @@ class AuthController extends GetxController implements GetxService {
       } else {
         isLoggingIn.value = true;
         if (showLoading) {
-          Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+          Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         }
         if (userType != null) {
           loginAsA.value = userType;
@@ -313,6 +357,8 @@ class AuthController extends GetxController implements GetxService {
           print('AuthController.login ${response}}');
           if (response.statusCode == 200) {
             if (response.body["status"] == "0") {
+              // Only a login she typed (not the silent re-login on app start).
+              if (email == null) AnalyticsHelper.loginFailed('email', '${response.body["message"] ?? 'refused'}');
               CustomToast.failToast(msg: response.body["message"]);
               if (email != null) {
                 Get.offAll(() => const WalkThroughScreen());
@@ -324,6 +370,7 @@ class AuthController extends GetxController implements GetxService {
                 logInUser = model.data;
 
                 addLocalStorage(logInUser!, password ?? loginUserPassword.text);
+                if (email == null) AnalyticsHelper.loginCompleted('email', userType: loginAsA.value.toLowerCase());
                 final trialStarted = await Get.find<HomeController>().startTrialFromSavedToken();
 
                 if (loginAsA.value == Constants.trainer) {
@@ -360,7 +407,7 @@ class AuthController extends GetxController implements GetxService {
   signInUsingGoogle(String userEmail, String name, String signedFrom, {String? userType, bool fromLocal = false, bool? showLoading}) {
     final bool shouldShowLoading = showLoading ?? !fromLocal;
     if (shouldShowLoading) {
-      Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+      Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
     }
     connectionService.checkConnection().then((value) async {
       if (!value) {
@@ -382,8 +429,13 @@ class AuthController extends GetxController implements GetxService {
           if (shouldShowLoading) {
             Get.back();
           }
+          // Remember Google / Apple so a new account's sign-up says how.
+          if (signedFrom == 'google' || signedFrom == 'apple') {
+            sharedPreferences.setString('last_social_provider', signedFrom);
+          }
           if (response.statusCode == 200) {
             if (response.body["status"] == "0") {
+              if (!fromLocal) AnalyticsHelper.loginFailed(signedFrom, '${response.body["message"] ?? 'refused'}');
               CustomToast.failToast(msg: response.body["message"]);
             } else if (response.body["status"] != "0") {
               if (response.body["status"] == "1") {
@@ -392,6 +444,7 @@ class AuthController extends GetxController implements GetxService {
                 logInUser = model.data;
 
                 addLocalStorage(logInUser!, signedFrom);
+                if (!fromLocal) AnalyticsHelper.loginCompleted(signedFrom, userType: loginAsA.value.toLowerCase());
                 final trialStarted = await Get.find<HomeController>().startTrialFromSavedToken();
 
                 if (loginAsA.value == Constants.user) {
@@ -429,6 +482,17 @@ class AuthController extends GetxController implements GetxService {
         });
       }
     });
+  }
+
+  /// Loads the paid Home dashboard while the splash is still showing, so
+  /// Home opens already drawn. Never blocks for more than 4 s and never
+  /// throws: on a timeout the fetch keeps going and Home shows it on arrival.
+  Future<void> _preloadPaidHome() async {
+    try {
+      final c = Get.find<PaidHomeController>();
+      if (c.dashboard.value != null) return;
+      await c.loadDashboard().timeout(const Duration(seconds: 4));
+    } catch (_) {}
   }
 
   getUsersBasedOnUserType(String userType, {bool addNull = false}) {
@@ -538,11 +602,26 @@ class AuthController extends GetxController implements GetxService {
     var list = sharedPreferences.getString(Constants.notificationList);
     List<NotificationMessage> notificationMessages = [];
 
+    // Oct 2026: one bad saved item must never crash the app on start —
+    // skip what can't be read (the server list refills the bell anyway).
     if (list != null) {
-      var list2 = jsonDecode(list);
-      notificationMessages = List<NotificationMessage>.from(
-        list2.map((item) => NotificationMessage.fromJson(item)),
-      );
+      try {
+        final list2 = jsonDecode(list);
+        if (list2 is List) {
+          for (final item in list2) {
+            try {
+              if (item is Map) {
+                notificationMessages.add(
+                    NotificationMessage.fromJson(Map<String, dynamic>.from(item)));
+              }
+            } catch (e) {
+              debugPrint('[bell] skipped a saved item: $e');
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[bell] saved list unreadable, starting empty: $e');
+      }
     }
     sharedPrefNotifier.value = notificationMessages;
     fetchNotifications();
@@ -650,6 +729,20 @@ class AuthController extends GetxController implements GetxService {
       }
     }
 
+    // Sign-up questions not finished (closed the app, lost internet, or
+    // signed up on another phone): open them again where she stopped,
+    // her saved answers filled in. Paid clients are covered by their
+    // health form, so they are never sent back here.
+    if (isRegularUser &&
+        !(logInUser?.status ?? false) &&
+        !SignupProgress.isDone(logInUser, sharedPreferences)) {
+      Get.offAll(() => const SignUpScreenQuestions(),
+          transition: Transition.fadeIn,
+          duration: const Duration(milliseconds: 650),
+          curve: Curves.easeOutCubic);
+      return;
+    }
+
     // Primary gate: explicit done flag written by TimePreferenceScreen._save()
     // on any completion path (select + go, skip, or Android back).
     // This survives logout because all clear() paths preserve it.
@@ -694,19 +787,83 @@ class AuthController extends GetxController implements GetxService {
       // on top after BottomBarScreen mounts if the trial was auto-started.
       Get.offAll(() => TimePreferenceScreen(
             onCompleted: (_) {
-              Get.offAll(() => BottomBarScreen());
+              // Smooth hand-off from splash/login to home.
+      Get.offAll(
+        () => BottomBarScreen(),
+        transition: Transition.fadeIn,
+        duration: const Duration(milliseconds: 650),
+        curve: Curves.easeOutCubic,
+      );
               if (trialStarted) {
                 enterTrialOnboarding(); // consolidated: -> diet quick-intake -> AI plan -> workout onboarding
               }
             },
-          ));
+          ),
+          transition: Transition.fadeIn,
+          duration: const Duration(milliseconds: 650),
+          curve: Curves.easeOutCubic);
     } else {
-      Get.offAll(() => BottomBarScreen());
+      // App start (still on the splash): fetch her Home dashboard first so
+      // the splash fades straight into a drawn Home, not into the loading
+      // skeleton (Oct 2026). Capped at 4 s; Home loads it itself if not.
+      if (isRegularUser && (logInUser?.status ?? false) && Get.currentRoute == '/') {
+        await _preloadPaidHome();
+      }
+      // Smooth hand-off from splash/login to home.
+      Get.offAll(
+        () => BottomBarScreen(),
+        transition: Transition.fadeIn,
+        duration: const Duration(milliseconds: 650),
+        curve: Curves.easeOutCubic,
+      );
       if (trialStarted) {
         // Push TrialJourneyScreen on top of BottomBarScreen so the user can
         // navigate back to home if needed. Small delay for BottomBarScreen mount.
         await Future.delayed(const Duration(milliseconds: 300));
         enterTrialOnboarding(); // consolidated: -> diet quick-intake -> AI plan -> workout onboarding
+      } else if (isRegularUser &&
+          !(logInUser?.status ?? false) &&
+          !trialActivated.value &&
+          savedTrialOnboardingStep() > 0) {
+        // She closed the app halfway through the trial form: take her
+        // back to the screen she was on (answers are saved). Oct 2026.
+        await Future.delayed(const Duration(milliseconds: 300));
+        enterTrialOnboarding();
+      }
+    }
+  }
+
+  /// Logout wipes the phone's saved data, but "already shown once"
+  /// markers must survive it, or one-time pop-ups come back after every
+  /// log-out / log-in (e.g. "Welcome to Fit Her, plan active" showed again
+  /// days after payment, Oct 2026). The markers carry her user / plan id,
+  /// so another account on the same phone still gets its own.
+  static const List<String> _keepOnLogout = [
+    'welcome_plan_', // PlanWelcomeMoment, per paid plan
+    'trial_welcome_done_', // TrialWelcomeSheet, per user
+    'target_ask_after_weighin_', // target weight question, per user
+    'profile_card_seen_', // "Finish your profile" seen, per user
+    'profile_complete_shown_', // "Profile complete 🎉" shown, per user
+    'plan_intro_seen_', // "Your plan just got personal", per user
+  ];
+
+  Future<void> _clearPrefsKeepingOnceMarkers() async {
+    final keep = <String, Object>{};
+    for (final k in sharedPreferences.getKeys()) {
+      if (_keepOnLogout.any(k.startsWith)) {
+        final v = sharedPreferences.get(k);
+        if (v != null) keep[k] = v;
+      }
+    }
+    await sharedPreferences.clear();
+    for (final e in keep.entries) {
+      final v = e.value;
+      if (v is bool) {
+        await sharedPreferences.setBool(e.key, v);
+      } else if (v is String) {
+        await sharedPreferences.setString(e.key, v);
+      } else if (v is int) {
+        await sharedPreferences.setInt(e.key, v);
       }
     }
   }
@@ -717,7 +874,7 @@ class AuthController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         await authRepo
             .loginGuestRepo(
           email: emailNameController.text,
@@ -754,7 +911,7 @@ class AuthController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         isSuccess = false;
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()),
+        Get.dialog(const Center(child: FhLoader()),
             barrierDismissible: false);
         await authRepo
             .forgotPasswordRepo(
@@ -769,6 +926,7 @@ class AuthController extends GetxController implements GetxService {
                   msg: response.body["message"] ?? "Failed to send OTP");
               isSuccess = false;
             } else if (response.body["status"] == "1") {
+              AnalyticsHelper.passwordReset('requested');
               isSuccess = true;
             }
           } else {
@@ -789,7 +947,7 @@ class AuthController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         isValid = false;
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()),
+        Get.dialog(const Center(child: FhLoader()),
             barrierDismissible: false);
         await authRepo
             .verifyOtpRepo(
@@ -801,6 +959,7 @@ class AuthController extends GetxController implements GetxService {
 
           if (response.statusCode == 200) {
             if (response.body["status"] == "1") {
+              AnalyticsHelper.passwordReset('otp_verified');
               isValid = true;
             } else {
               CustomToast.failToast(
@@ -827,7 +986,7 @@ class AuthController extends GetxController implements GetxService {
       if (!value) {
         CustomToast.noInternetToast();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()),
+        Get.dialog(const Center(child: FhLoader()),
             barrierDismissible: false);
         await authRepo
             .resetPasswordRepo(
@@ -843,6 +1002,7 @@ class AuthController extends GetxController implements GetxService {
               CustomToast.failToast(
                   msg: response.body["message"] ?? "Failed to reset password");
             } else if (response.body["status"] == "1") {
+              AnalyticsHelper.passwordReset('done');
               Get.offAll(() => Login());
               CustomToast.successToast(
                   msg: response.body["message"] ??
@@ -857,7 +1017,20 @@ class AuthController extends GetxController implements GetxService {
     });
   }
 
-  void removeItem(int index) {
+  /// [serverId]: the bell item's id on the server, so it is hidden there
+  /// too and doesn't come back on the next refresh (Oct 2026).
+  void removeItem(int index, {int? serverId}) {
+    if (serverId != null) {
+      final token = sharedPreferences.getString(Constants.accessToken) ?? '';
+      if (token.isNotEmpty) {
+        authRepo
+            .hideNotifications(accessToken: token, notificationIds: [serverId])
+            .catchError((e) {
+          debugPrint('hideNotifications failed: $e');
+          return Response<dynamic>();
+        });
+      }
+    }
     // Update the list by removing the item at the given index
     if (sharedPrefNotifier.value != null) {
       var list = sharedPreferences.getString(Constants.notificationList);
@@ -912,6 +1085,9 @@ class AuthController extends GetxController implements GetxService {
   void _disposePerUserControllers() {
     for (final delete in <void Function()>[
       () => Get.delete<HomeController>(force: true),
+      // Nov 2026: kept "permanent", so the last user's trial moment could
+      // show for the next one.
+      () => Get.delete<TrialMomentController>(force: true),
       () => Get.delete<DietController>(force: true),
       () => Get.delete<ProgressController>(force: true),
       () => Get.delete<WorkOutController>(force: true),
@@ -953,8 +1129,12 @@ class AuthController extends GetxController implements GetxService {
         if (!value) {
           CustomToast.noInternetToast();
         } else {
-          Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
-          await authRepo.logoutUserRepo(deviceToken: token).then((response) async {
+          Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
+          await authRepo
+              .logoutUserRepo(
+                  deviceToken: token,
+                  accessToken: sharedPreferences.getString(Constants.accessToken))
+              .then((response) async {
             Get.back();
             if (response.statusCode == 200) {
               if (response.body["status"] == "0") {
@@ -962,11 +1142,15 @@ class AuthController extends GetxController implements GetxService {
               } else if (response.body["status"] != "0") {
                 if (response.body["status"] == "1") {
                   CustomToast.successToast(msg: response.body["message"]);
+                  // Mixpanel: forget her, the next person on this phone is new.
+                  AnalyticsHelper.logout();
                   // Preserve time-preference keys across logout — device-level
                   // settings; wiping them re-triggers onboarding every login.
                   final savedTimeBlock = sharedPreferences.getString(Constants.timeBlock);
                   final savedPrefDone = sharedPreferences.getString(Constants.timePreferenceDone);
-                  await sharedPreferences.clear();
+                  // Logged out: stop her daily nudge on this phone (it repeats by itself).
+                  await NotificationScheduler.cancelAll();
+                  await _clearPrefsKeepingOnceMarkers();
                   if (savedTimeBlock != null) {
                     sharedPreferences.setString(Constants.timeBlock, savedTimeBlock);
                   }
@@ -993,10 +1177,18 @@ class AuthController extends GetxController implements GetxService {
         }
       });
     } else {
+      // No push token on this phone: still end the login on the server
+      // (fire and forget — she is logged out locally either way).
+      final accessToken = sharedPreferences.getString(Constants.accessToken);
+      if (accessToken != null && accessToken.isNotEmpty) {
+        authRepo.logoutUserRepo(deviceToken: '', accessToken: accessToken);
+      }
       CustomToast.failToast(msg: "Successfully Logout");
       final savedTimeBlock = sharedPreferences.getString(Constants.timeBlock);
       final savedPrefDone = sharedPreferences.getString(Constants.timePreferenceDone);
-      await sharedPreferences.clear();
+      // Logged out: stop her daily nudge on this phone (it repeats by itself).
+      await NotificationScheduler.cancelAll();
+      await _clearPrefsKeepingOnceMarkers();
       if (savedTimeBlock != null) {
         sharedPreferences.setString(Constants.timeBlock, savedTimeBlock);
       }
@@ -1013,6 +1205,38 @@ class AuthController extends GetxController implements GetxService {
     }
   }
 
+  /// Nov 2026: the server ended this login (logged out on another phone,
+  /// password changed). Sign out on this phone only (no server call, the
+  /// token is already dead) and show the login screen. Runs once even when
+  /// several requests fail at the same time.
+  bool _signingOut = false;
+  Future<void> signOutLocally({String message = 'Please log in again'}) async {
+    if (_signingOut) return;
+    final token = sharedPreferences.getString(Constants.accessToken) ?? '';
+    if (token.isEmpty) return; // already logged out
+    _signingOut = true;
+    try {
+      final savedTimeBlock = sharedPreferences.getString(Constants.timeBlock);
+      final savedPrefDone = sharedPreferences.getString(Constants.timePreferenceDone);
+      await NotificationScheduler.cancelAll();
+      await _clearPrefsKeepingOnceMarkers();
+      if (savedTimeBlock != null) sharedPreferences.setString(Constants.timeBlock, savedTimeBlock);
+      if (savedPrefDone != null) sharedPreferences.setString(Constants.timePreferenceDone, savedPrefDone);
+      trialActivated.value = false;
+      isPaid.value = false;
+      logInUser = null;
+      _disposePerUserControllers();
+      await init();
+      loginAsA.value = Constants.user;
+      Get.offAll(() => Login());
+      Future.delayed(const Duration(milliseconds: 400), () => CustomToast.failToast(msg: message));
+    } catch (e) {
+      debugPrint('signOutLocally: $e');
+    } finally {
+      _signingOut = false;
+    }
+  }
+
   deleteUser({String? id}) {
     var token = sharedPreferences.getString(Constants.accessToken);
     if (token != null) {
@@ -1020,8 +1244,10 @@ class AuthController extends GetxController implements GetxService {
         if (!value) {
           CustomToast.noInternetToast();
         } else {
-          Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
-          await authRepo.deleteUser(id: id ?? sharedPreferences.getString(Constants.userId) ?? "").then((response) async {
+          Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
+          await authRepo.deleteUser(
+                  id: id ?? sharedPreferences.getString(Constants.userId) ?? "",
+                  accessToken: sharedPreferences.getString(Constants.accessToken)).then((response) async {
             Get.back();
             if (response.statusCode == 200) {
               if (response.body["status"] == "0") {
@@ -1030,7 +1256,9 @@ class AuthController extends GetxController implements GetxService {
                 if (response.body["status"] == "1") {
                   final savedTimeBlock = sharedPreferences.getString(Constants.timeBlock);
                   final savedPrefDone = sharedPreferences.getString(Constants.timePreferenceDone);
-                  await sharedPreferences.clear();
+                  // Logged out: stop her daily nudge on this phone (it repeats by itself).
+                  await NotificationScheduler.cancelAll();
+                  await _clearPrefsKeepingOnceMarkers();
                   if (savedTimeBlock != null) {
                     sharedPreferences.setString(Constants.timeBlock, savedTimeBlock);
                   }

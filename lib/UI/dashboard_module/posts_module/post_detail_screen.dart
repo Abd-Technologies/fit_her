@@ -27,11 +27,21 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   final FocusNode _focus = FocusNode();
   final ScrollController _scroll = ScrollController();
   bool _sending = false;
+  bool _fetching = false;
 
   @override
   void initState() {
     super.initState();
     socket.joinPost(widget.postId);
+    // Opened from a notification before the feed loaded: load it quietly,
+    // so the post (and its heart) shows up and works.
+    if (_post == null) {
+      _fetching = true;
+      controller.getAllPosts(silent: true);
+      Future.delayed(const Duration(seconds: 6), () {
+        if (mounted) setState(() => _fetching = false);
+      });
+    }
   }
 
   @override
@@ -47,19 +57,24 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
   Future<void> _send() async {
     final text = _input.text.trim();
-    if (text.isEmpty || _sending) return;
-    setState(() => _sending = true);
-    final ok = await controller.sendReplyNow(postId: widget.postId, message: text);
-    if (!mounted) return;
-    setState(() => _sending = false);
-    if (ok) {
-      _input.clear();
-      FocusScope.of(context).unfocus();
-      await Future.delayed(const Duration(milliseconds: 150));
+    if (text.isEmpty) return;
+    // Oct 2026: instant. Clear the box and show her reply right away;
+    // if it couldn't be sent, her text comes back in the box.
+    _sending = true;
+    _input.clear();
+    final send = controller.sendReplyNow(postId: widget.postId, message: text);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scroll.hasClients) {
         _scroll.animateTo(_scroll.position.maxScrollExtent,
             duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
       }
+    });
+    final ok = await send;
+    _sending = false;
+    if (!mounted) return;
+    if (!ok && _input.text.trim().isEmpty) {
+      _input.text = text;
+      _input.selection = TextSelection.collapsed(offset: text.length);
     }
   }
 
@@ -115,7 +130,11 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                 ),
                 Expanded(
                   child: post == null
-                      ? Center(child: Text('This post is no longer available', style: feedText(13, color: kFeedSoft)))
+                      ? Center(
+                          child: _fetching
+                              ? const CircularProgressIndicator(strokeWidth: 2.4)
+                              : Text('This post is no longer available', style: feedText(13, color: kFeedSoft)),
+                        )
                       : ListView(
                           controller: _scroll,
                           padding: EdgeInsets.fromLTRB(16.w, 8.h, 16.w, 16.h),
@@ -202,7 +221,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                         children: [
                           Text(r.author.name, style: feedText(12, weight: FontWeight.w700)),
                           FeedRoleChip(author: r.author),
-                          Text('· ${feedTime(r.createdAt)}', style: feedText(10, color: kFeedMuted)),
+                          Text(r.pending ? '· Sending…' : '· ${feedTime(r.createdAt)}',
+                              style: feedText(10, color: kFeedMuted)),
                         ],
                       ),
                       SizedBox(height: 4.h),
@@ -210,7 +230,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                     ],
                   ),
                 ),
-                if (canPost)
+                if (canPost && !r.pending)
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: () => _replyTo(r),

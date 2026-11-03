@@ -7,6 +7,9 @@ import 'next_up_glow.dart';
 import 'paid_feel_selector.dart';
 import 'paid_sleep_card.dart';
 import 'paid_water_card.dart';
+import 'package:get/get.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'paid_stats_row.dart' show PaidMealsInsightRow, mealsLeftToLog;
 
 /// "Today's insights" box: feeling, water and sleep in one card.
 ///
@@ -58,6 +61,41 @@ class _TodayInsightsBoxState extends State<TodayInsightsBox> {
   _Open _open = _Open.none;
   Timer? _foldTimer;
 
+  // "Thank you for logging" note: shown for 3 seconds, once a day, the
+  // moment everything is logged (Oct 2026).
+  static const String _kThanksDay = 'insights_thanks_day';
+  bool _thanksVisible = false;
+  bool _thanksQueued = false;
+  Timer? _thanksTimer;
+
+  String _todayKey() {
+    final n = DateTime.now();
+    return '${n.year}-${n.month}-${n.day}';
+  }
+
+  void _maybeQueueThanks() {
+    if (_thanksQueued || _thanksVisible) return;
+    String? shownOn;
+    SharedPreferences? prefs;
+    try {
+      prefs = Get.find<SharedPreferences>();
+      shownOn = prefs.getString(_kThanksDay);
+    } catch (_) {}
+    final today = _todayKey();
+    if (shownOn == today) return;
+    _thanksQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _thanksQueued = false;
+      if (!mounted) return;
+      prefs?.setString(_kThanksDay, today);
+      setState(() => _thanksVisible = true);
+      _thanksTimer?.cancel();
+      _thanksTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _thanksVisible = false);
+      });
+    });
+  }
+
   @override
   void didUpdateWidget(covariant TodayInsightsBox old) {
     super.didUpdateWidget(old);
@@ -70,6 +108,7 @@ class _TodayInsightsBoxState extends State<TodayInsightsBox> {
   @override
   void dispose() {
     _foldTimer?.cancel();
+    _thanksTimer?.cancel();
     super.dispose();
   }
 
@@ -163,15 +202,20 @@ class _TodayInsightsBoxState extends State<TodayInsightsBox> {
                 ),
               ),
               const Spacer(),
-              Text(
-                toLog == 0 ? 'All done ✓' : '$toLog to log',
-                style: TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
-                  color: toLog == 0 ? _green : _amber,
-                ),
-              ),
+              // Meals count too (Oct 2026): "All done" only once every
+              // meal of her plan is logged, not after mood/water/sleep.
+              Obx(() {
+                final left = toLog + mealsLeftToLog();
+                return Text(
+                  left == 0 ? 'All done ✓' : '$left to log',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    color: left == 0 ? _green : _amber,
+                  ),
+                );
+              }),
             ],
           ),
           const SizedBox(height: 10),
@@ -184,6 +228,65 @@ class _TodayInsightsBoxState extends State<TodayInsightsBox> {
               child: KeyedSubtree(key: ValueKey('${allLogged}_$_open'), child: body),
             ),
           ),
+          // Meals (Oct 2026): logged today + next meal, opens the log sheet.
+          const SizedBox(height: 8),
+          PaidMealsInsightRow(dashboard: d),
+          // Everything logged today (Oct 2026): thank her and say why it
+          // matters. True to the app: Luna's own-pattern insights start
+          // after 14 days of check-ins (ProgressBuilders honestyBanner).
+          Obx(() {
+            if (toLog + mealsLeftToLog() != 0) return const SizedBox.shrink();
+            _maybeQueueThanks();
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: !_thanksVisible
+                  ? const SizedBox.shrink(key: ValueKey('thanks_off'))
+                  : Container(
+              key: const ValueKey('thanks_on'),
+              margin: const EdgeInsets.only(top: 10),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 11),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF2F9EE),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFCFE7C6)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('🌙', style: TextStyle(fontSize: 16)),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Text(
+                          'Thank you for logging today 💚',
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                            color: _ink,
+                          ),
+                        ),
+                        SizedBox(height: 3),
+                        Text(
+                          "Every log teaches Luna how your body works. After 14 days of check-ins, her tips are matched to your own hormones and patterns, not just your phase.",
+                          style: TextStyle(
+                            fontFamily: 'Poppins',
+                            fontSize: 11.5,
+                            height: 1.45,
+                            color: _soft,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            );
+          }),
         ],
       ),
     );

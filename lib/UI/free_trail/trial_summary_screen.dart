@@ -1,8 +1,9 @@
+import '../../helper/analytics_helper.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:intl/intl.dart' show NumberFormat;
+import 'package:intl/intl.dart' show NumberFormat, DateFormat;
 
 import '../../data/controllers/home_controller/home_controller.dart';
 import '../plans_module/all_plans.dart';
@@ -15,7 +16,9 @@ import '../../widgets/trial_page_background.dart';
 /// from GET /trial/summary; the offer is saved on the server so the
 /// countdown is the same everywhere.
 class TrialSummaryScreen extends StatefulWidget {
-  const TrialSummaryScreen({super.key});
+  /// Scroll straight to the offer ("Keep going" on the home recap).
+  final bool jumpToOffer;
+  const TrialSummaryScreen({super.key, this.jumpToOffer = false});
 
   @override
   State<TrialSummaryScreen> createState() => _TrialSummaryScreenState();
@@ -37,10 +40,13 @@ class _TrialSummaryScreenState extends State<TrialSummaryScreen> {
   Timer? _tick;
   // Selected duration per plan.
   final Map<int, int> _durationByPlan = {};
+  final GlobalKey _offerKey = GlobalKey();
+  bool _jumped = false;
 
   @override
   void initState() {
     super.initState();
+    AnalyticsHelper.offerSeen('trial_summary');
     _load();
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted && _offer != null) setState(() {});
@@ -61,6 +67,16 @@ class _TrialSummaryScreenState extends State<TrialSummaryScreen> {
       _data = d;
       _loading = false;
     });
+    if (widget.jumpToOffer && !_jumped && d != null) {
+      _jumped = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = _offerKey.currentContext;
+        if (ctx != null) {
+          Scrollable.ensureVisible(ctx,
+              duration: const Duration(milliseconds: 450), curve: Curves.easeOutCubic);
+        }
+      });
+    }
   }
 
   Map<String, dynamic>? get _offer =>
@@ -103,8 +119,9 @@ class _TrialSummaryScreenState extends State<TrialSummaryScreen> {
                     children: [
                       _hero(),
                       _stats(),
+                      _daysCard(),
                       _noteCard(),
-                      _offerSection(),
+                      KeyedSubtree(key: _offerKey, child: _offerSection()),
                       const SizedBox(height: 28),
                     ],
                   ),
@@ -252,6 +269,131 @@ class _TrialSummaryScreenState extends State<TrialSummaryScreen> {
     );
   }
 
+  // ── Your days (Oct 2026) ────────────────────────────────────────────
+  // One row per trial day (the admin's trial length, calendar days like
+  // her starter meal plan). Missed things are said gently, never in red.
+  Widget _daysCard() {
+    final raw = _data?['days'];
+    if (raw is! List || raw.isEmpty) return const SizedBox.shrink();
+    final days = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+    String dateLabel(String iso) {
+      final dt = DateTime.tryParse(iso);
+      return dt == null ? iso : DateFormat('EEE d MMM').format(dt);
+    }
+
+    Widget chip(String text, {bool soft = false}) => Container(
+          margin: const EdgeInsets.only(right: 6, bottom: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+          decoration: BoxDecoration(
+            color: soft ? const Color(0xFFFBF1E6) : const Color(0xFFF1F7EE),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 11,
+              color: soft ? const Color(0xFFB07A2A) : _kInkSoft,
+            ),
+          ),
+        );
+
+    final rows = <Widget>[];
+    for (var i = 0; i < days.length; i++) {
+      final d = days[i];
+      final classes = _int(d['classes']);
+      final meals = _int(d['meals']);
+      final water = _int(d['waterMl']);
+      final sleep = d['sleepHours'];
+      final future = d['isFuture'] == true;
+      final today = d['isToday'] == true;
+      final chips = <Widget>[
+        if (classes > 0) chip('🏋️ ${classes == 1 ? '1 class' : '$classes classes'}'),
+        if (meals > 0) chip('🍽️ $meals meal${meals == 1 ? '' : 's'}${today ? ' so far' : ''}'),
+        if (water > 0) chip('💧 ${(water / 1000).toStringAsFixed(1)} L'),
+        if (sleep != null) chip('🌙 ${(sleep is num ? sleep : num.tryParse('$sleep') ?? 0).toStringAsFixed(0)}h sleep'),
+      ];
+      if (chips.isEmpty) {
+        chips.add(chip(future ? 'Coming up' : (today ? 'Still time today' : 'A rest day'), soft: !future));
+      } else if (classes == 0 && !future && !today) {
+        chips.add(chip('No class this day', soft: true));
+      }
+      rows.add(Container(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        decoration: BoxDecoration(
+          border: i == 0 ? null : const Border(top: BorderSide(color: Color(0xFFEEF3EA))),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _kAccentBg,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                'D${_int(d['day'])}',
+                style: const TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF3E8E36),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${dateLabel('${d['date']}')}${today ? ' · today' : ''}',
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: _kInk,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Wrap(children: chips),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ));
+    }
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: _kBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Your days',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: _kInk,
+            ),
+          ),
+          const SizedBox(height: 4),
+          ...rows,
+        ],
+      ),
+    );
+  }
+
   Widget _noteCard() {
     final note = '${_data?['note'] ?? ''}'.trim();
     if (note.isEmpty) return const SizedBox.shrink();
@@ -305,13 +447,26 @@ class _TrialSummaryScreenState extends State<TrialSummaryScreen> {
     final expiresAt = DateTime.tryParse('${offer['expiresAt']}')?.toLocal();
     final left = expiresAt == null ? Duration.zero : expiresAt.difference(DateTime.now());
     if (offer['expired'] == true || left.isNegative) {
+      // Offer over: same plan cards, at her country's real price.
+      final regular = (offer['regularItems'] is List ? offer['regularItems'] as List : const [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      final regPlans = <int, List<Map<String, dynamic>>>{};
+      for (final i in regular) {
+        regPlans.putIfAbsent(_int(i['planId']), () => []).add(i);
+      }
       return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _infoBox('This offer has ended. You can still continue at the normal price, anytime.'),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: _primaryButton('See plans', () => Get.to(() => OurPlansScreen())),
-          ),
+          _infoBox('Your trial offer has ended. You can still join Fit Her at the regular price, anytime.'),
+          if (regPlans.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: _primaryButton('See plans', () => Get.to(() => OurPlansScreen())),
+            )
+          else
+            ...regPlans.entries.map((e) => _planCard(e.key, e.value, 0, regular: true)),
         ],
       );
     }
@@ -377,7 +532,7 @@ class _TrialSummaryScreenState extends State<TrialSummaryScreen> {
     );
   }
 
-  Widget _planCard(int planId, List<Map<String, dynamic>> options, int pct) {
+  Widget _planCard(int planId, List<Map<String, dynamic>> options, int pct, {bool regular = false}) {
     final recommended = options.first['recommended'] == true;
     final selectedDuration = _durationByPlan[planId] ?? _int(options.first['durationId']);
     final sel = options.firstWhere(
@@ -477,8 +632,10 @@ class _TrialSummaryScreenState extends State<TrialSummaryScreen> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
+                    // Same real price before and after the timer; during the
+                    // offer only a "20% off" tag (no maths shown).
                     Text(
-                      _money(price),
+                      _money(list),
                       style: const TextStyle(
                         fontFamily: 'Poppins',
                         fontSize: 24,
@@ -486,38 +643,50 @@ class _TrialSummaryScreenState extends State<TrialSummaryScreen> {
                         color: _kInk,
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(
-                        _money(list),
-                        style: const TextStyle(
-                          fontFamily: 'Poppins',
-                          fontSize: 14,
-                          color: _kInkSoft,
-                          decoration: TextDecoration.lineThrough,
+                    if (!regular) const SizedBox(width: 10),
+                    if (!regular)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: _kAmber.withOpacity(0.14),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            '$pct% off',
+                            style: const TextStyle(
+                              fontFamily: 'Poppins',
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: _kAmber,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
                   ],
                 ),
-                Text(
-                  'You save ${_money(list - price)}',
-                  style: const TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    color: _kAmber,
+                if (!regular)
+                  Text(
+                    'We are giving you $pct% off',
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: _kInkSoft,
+                    ),
                   ),
-                ),
                 const SizedBox(height: 14),
                 _primaryButton(
-                  'Continue with $pct% off',
-                  () => Get.to(() => SelectPaymentMode(
-                        planId: '$planId',
-                        durationId: _int(sel['durationId']),
-                        price: '$price',
-                      )),
+                  regular ? 'Continue' : 'Continue with $pct% off',
+                  () {
+                    AnalyticsHelper.offerTapped('trial_summary', offer: regular ? 'regular' : 'discount');
+                    Get.to(() => SelectPaymentMode(
+                          planId: '$planId',
+                          durationId: _int(sel['durationId']),
+                          price: '$price',
+                        ));
+                  },
                   filled: recommended,
                 ),
               ],

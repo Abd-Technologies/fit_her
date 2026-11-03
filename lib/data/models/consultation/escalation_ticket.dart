@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// Mirrors backend EscalationTickets row. Used by the admin/dietitian
 /// queue UI in Phase 3-4 work. User-side just sees a confirmation when
 /// they open one (MEDICAL or PLAN_DELAYED via the FAB / popup CTAs).
@@ -16,6 +18,11 @@ class EscalationTicket {
   final int? resolvedBy;
   final String? resolutionNote;
 
+  /// Google Meet attendance for tickets about a consultation (server
+  /// adds it when payload.appointmentId is set): checked, dietitianJoined
+  /// and clientJoined (true / false / null = unknown), participants.
+  final Map<String, dynamic>? attendance;
+
   const EscalationTicket({
     this.id,
     this.userId,
@@ -30,11 +37,21 @@ class EscalationTicket {
     this.resolvedAt,
     this.resolvedBy,
     this.resolutionNote,
+    this.attendance,
   });
 
   factory EscalationTicket.fromJson(Map<String, dynamic> json) {
-    Map<String, dynamic>? m(dynamic x) =>
-        x is Map ? Map<String, dynamic>.from(x) : null;
+    // MariaDB can return JSON columns as strings, so decode those too.
+    Map<String, dynamic>? m(dynamic x) {
+      if (x is Map) return Map<String, dynamic>.from(x);
+      if (x is String && x.isNotEmpty) {
+        try {
+          final v = jsonDecode(x);
+          if (v is Map) return Map<String, dynamic>.from(v);
+        } catch (_) {}
+      }
+      return null;
+    }
     DateTime? d(dynamic x) =>
         x is String && x.isNotEmpty ? DateTime.tryParse(x) : null;
 
@@ -52,6 +69,7 @@ class EscalationTicket {
       resolvedAt: d(json['resolvedAt']),
       resolvedBy: json['resolvedBy'] as int?,
       resolutionNote: json['resolutionNote'] as String?,
+      attendance: m(json['attendance']),
     );
   }
 }

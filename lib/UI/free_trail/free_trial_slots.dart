@@ -49,7 +49,7 @@ class _FreeTrialSlotsState extends State<FreeTrialSlots> {
                 children: [
                   Center(
                     child: Text(
-                      "Browse the available class times for your 3-day trial.\nYou will book one class at a time as you progress.",
+                      "Browse the available class times for your ${homeController.trialDays.value}-day trial.\nYou will book one class at a time as you progress.",
                       style:
                           textTheme.bodySmall!.copyWith(fontWeight: FontWeight.w400),
                       textAlign: TextAlign.center,

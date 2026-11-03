@@ -22,6 +22,12 @@ class V2BottomSheet extends StatelessWidget {
   final Widget child;
   final bool dismissible;
 
+  /// false = skip the built-in title/close row entirely, for sheets that
+  /// draw their own header (e.g. BookInitialReminderSheet's avatar +
+  /// eyebrow + title + close layout). Default true keeps every existing
+  /// sheet exactly as it was.
+  final bool showHeader;
+
   static const Color _bg = Color(0xFFFFFFFF);
   static const Color _drag = Color(0xFFC8DEC4);
   static const Color _textDark = Color(0xFF1A3A22);
@@ -36,6 +42,7 @@ class V2BottomSheet extends StatelessWidget {
     this.title,
     required this.child,
     this.dismissible = true,
+    this.showHeader = true,
   }) : super(key: key);
 
   /// Helper that wraps `Get.bottomSheet` with the V2 shell. Returns
@@ -44,11 +51,13 @@ class V2BottomSheet extends StatelessWidget {
     String? title,
     required Widget child,
     bool dismissible = true,
+    bool showHeader = true,
   }) {
     return Get.bottomSheet<T>(
       V2BottomSheet(
         title: title,
         dismissible: dismissible,
+        showHeader: showHeader,
         child: child,
       ),
       isScrollControlled: true,
@@ -76,10 +85,13 @@ class V2BottomSheet extends StatelessWidget {
       // snapping to the new inset a frame late — that one-frame lag was
       // the other half of the "content looks like it's floating loose
       // over the page" glitch on lower-end devices.
-      child: AnimatedPadding(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOut,
-        padding: EdgeInsets.only(bottom: viewInsets),
+      // Oct 2026: no keyboard padding here any more. Get.bottomSheet
+      // already lifts the sheet above the keyboard; adding it again here
+      // lifted it TWICE, so with the keyboard open the sheet floated
+      // half-way up the screen with Home showing below it (weekly
+      // check-in weight box).
+      child: Padding(
+        padding: EdgeInsets.zero,
         child: Container(
           decoration: const BoxDecoration(
             color: _bg,
@@ -92,8 +104,9 @@ class V2BottomSheet extends StatelessWidget {
               ),
             ],
           ),
+          // Fits above the keyboard when it is open.
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(context).size.height * 0.92,
+            maxHeight: (MediaQuery.of(context).size.height - viewInsets) * 0.92,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -116,6 +129,7 @@ class V2BottomSheet extends StatelessWidget {
                 const SizedBox(height: 16),
 
               // Title row + close button.
+              if (showHeader)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 4, 8, 4),
                 child: Row(

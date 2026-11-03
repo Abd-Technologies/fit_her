@@ -1,4 +1,8 @@
+import '../../../helper/analytics_helper.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/bottom_bar_screen/diet_bottom_bar.dart';
+import '../../free_trail/trial_summary_screen.dart';
+import '../../../widgets/new_home/trial_cta_card.dart' show showTrialStartDialog;
+import '../../../data/controllers/auth_controller/auth_controller.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/recommended_slots_screen.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/bottom_bar_screen/work_out_bottom_screen.dart';
 import 'package:fitness_zone_2/data/controllers/diet_contoller/diet_controller.dart';
@@ -105,9 +109,46 @@ class _WorkPlansOfUserState extends State<WorkPlansOfUser> {
           );
         }
 
-        // Active 3-day trial with no paid plan → show the public slot
-        // schedule exactly as paid users see it.  planId '0' tells the
-        // backend to return all public slots for the week.
+        // No package: always the paid schedule design (public slots,
+        // planId '0'), never the old "Your Plans" page.
+        //   trial running   → exactly like a paid user (trial join rules)
+        //   trial not started → buttons "Try free →" (trial flow)
+        //   trial ended     → buttons "Choose a plan →" (summary + offer)
+        if (plans.isEmpty) {
+          final running = hasActiveThreeDayTrial(homeController);
+          final started = Get.find<AuthController>().trialActivated.value;
+          final ended = !running && started && homeController.trialEndedUnpaid;
+          homeController.trialLive.value; // rebuild when trial ends
+          if (!_requestedTrialSlots) {
+            _requestedTrialSlots = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              selectedPlan = '0';
+              workOutController.getDietPlanDetailsFunc('0');
+            });
+          }
+          return _animatedBody(
+            WorkOutBottomScreen(
+              planId: '0',
+              showBackButton: widget.showBackButton,
+              previewCtaLabel: running ? null : (ended ? 'Choose a plan →' : 'Try free →'),
+              onPreviewCta: running
+                  ? null
+                  : (ended
+                      ? () {
+                          AnalyticsHelper.offerTapped('workout_preview', offer: 'plans');
+                          Get.to<dynamic>(() => const TrialSummaryScreen());
+                        }
+                      : () {
+                          AnalyticsHelper.offerTapped('workout_preview', offer: 'trial');
+                          showTrialStartDialog();
+                        }),
+            ),
+            keyValue: running ? 'workout-trial' : (ended ? 'workout-ended' : 'workout-preview'),
+          );
+        }
+
+        // (old) Active 3-day trial with no paid plan → kept for reference.
         if (plans.isEmpty && hasActiveThreeDayTrial(homeController)) {
           if (!_requestedTrialSlots) {
             _requestedTrialSlots = true;

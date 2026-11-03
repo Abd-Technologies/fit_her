@@ -232,8 +232,15 @@ class _PaidWaterCardState extends State<PaidWaterCard> {
               color: theme.accent,
               onTap: _openEdit,
             )
-          else
+          else ...[
             _buildButtonRow(theme),
+            // Nov 2026: one tap for the whole goal (no tapping + Glass ten
+            // times). Adds only what's left to reach her target.
+            if (hasTarget && !goalReached && (targetMl! - (consumedMl ?? 0)) > 0) ...[
+              const SizedBox(height: 6),
+              _buildAllButton(targetMl!, consumedMl ?? 0),
+            ],
+          ],
         ],
       ),
     );
@@ -361,7 +368,7 @@ class _PaidWaterCardState extends State<PaidWaterCard> {
             children: [
               Expanded(
                 child: _ActionButton(
-                  label: '🥛 Glass',
+                  label: '+ Glass',
                   amount: '200 ml',
                   accent: theme.accent,
                   onTap: () => _onTap(200),
@@ -370,13 +377,80 @@ class _PaidWaterCardState extends State<PaidWaterCard> {
               const SizedBox(width: 6),
               Expanded(
                 child: _ActionButton(
-                  label: '🧴 Bottle',
+                  label: '+ Bottle',
                   amount: '500 ml',
                   accent: theme.accent,
                   onTap: () => _onTap(500),
                 ),
               ),
             ],
+          ),
+        ),
+      );
+    });
+  }
+
+  /// "✓ All 2.1 L": marks the rest of today's goal as drunk, after one
+  /// quick "are you sure" so a stray tap doesn't fill her day.
+  Widget _buildAllButton(int targetMl, int consumedMl) {
+    final left = targetMl - consumedMl;
+    final targetL = _formatL(targetMl, stripTrailingZero: true);
+    return Obx(() {
+      final saving = _controller.isLoggingWater.value;
+      return Opacity(
+        opacity: saving ? 0.6 : 1.0,
+        child: IgnorePointer(
+          ignoring: saving,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () async {
+              final sure = await showDialog<bool>(
+                context: context,
+                builder: (c) => AlertDialog(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  title: Text('Drank all $targetL L today?',
+                      style: const TextStyle(fontFamily: 'Poppins', fontSize: 16, fontWeight: FontWeight.w700)),
+                  content: Text(
+                    consumedMl > 0
+                        ? 'This adds the ${_formatL(left)} L left to reach your goal.'
+                        : 'This marks your whole water goal as done for today.',
+                    style: const TextStyle(fontFamily: 'Poppins', fontSize: 13, height: 1.4),
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6DC55A),
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(c, true),
+                      child: const Text('Yes, all done'),
+                    ),
+                  ],
+                ),
+              );
+              if (sure == true && mounted) await _onTap(left);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF6FD),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFBFDDF2), width: 1),
+              ),
+              child: Text(
+                consumedMl > 0 ? '✓ Rest of goal · ${_formatL(left)} L' : '✓ All $targetL L done',
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF2F6E9E),
+                  height: 1.1,
+                ),
+              ),
+            ),
           ),
         ),
       );
@@ -470,10 +544,12 @@ class _ActionButton extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 5),
         alignment: Alignment.center,
+        // Calm white chip with a soft border (the pink fill read like
+        // a warning); dark ink text.
         decoration: BoxDecoration(
-          color: accent.withOpacity(0.12),
+          color: Colors.white,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: accent.withOpacity(0.45), width: 1),
+          border: Border.all(color: const Color(0xFFE1EADC), width: 1),
         ),
         // Friendly name on top, the real amount underneath so she
         // knows exactly what one tap adds.
@@ -485,7 +561,7 @@ class _ActionButton extends StatelessWidget {
               style: TextStyle(
                 fontSize: 10.5,
                 fontWeight: FontWeight.w700,
-                color: accent,
+                color: const Color(0xFF163220),
                 height: 1.1,
               ),
             ),
@@ -495,7 +571,7 @@ class _ActionButton extends StatelessWidget {
               style: TextStyle(
                 fontSize: 8.5,
                 fontWeight: FontWeight.w500,
-                color: accent.withOpacity(0.8),
+                color: const Color(0xFF8A9A88),
                 height: 1.1,
               ),
             ),

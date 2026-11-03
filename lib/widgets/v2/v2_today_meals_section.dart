@@ -1,10 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
+import 'package:timezone/timezone.dart' as tz;
 
 import '../../UI/consultation_module/booking/book_consultation_sheet.dart';
 import '../../UI/diet_screen/user_v2/day7_review_screen.dart';
 import '../../UI/plans_module/all_plans.dart';
+import '../../UI/consultation_module/popups/booking_locked_sheet.dart';
+import '../../UI/dashboard_module/bottom_bar_screen/Help_Screen.dart';
+import '../../UI/support/report_issue_screen.dart';
+import '../../data/controllers/home_controller/home_controller.dart';
+import '../../data/Repos/diet_plan_v2/diet_plan_user_repository.dart' show BookingContextV2;
+import '../weekly_checkin/weekly_checkin_sheet.dart';
+import '../toasts.dart';
 import '../../data/controllers/consultation_controller/consultation_controller.dart';
 import '../../data/controllers/day7_review_controller/day7_review_controller.dart';
 import '../../data/controllers/diet_plan_user_controller/diet_plan_user_controller.dart';
@@ -33,22 +43,101 @@ const Color _kAlternative = Color(0xFFFAC775);
 /// path where context isn't auto-fetched), then routes:
 ///   • bookingContext.canBook → BookConsultationSheet (kind: followup)
 ///   • else → OurPlansScreen (silent fallback — no error snackbar)
+/// Dead-end audit (Oct 2026): a PAID client whose dietitian isn't assigned
+/// yet must not be sent to the "buy a plan" screen. Tell her what happens
+/// next and give her a way to reach us.
+bool _paidWithoutDietitian(BookingContextV2? ctx) =>
+    ctx != null &&
+    ctx.userPlanId != null &&
+    ctx.dietitianId == null &&
+    !ctx.planEnded &&
+    ctx.nextStep != 'renew' &&
+    !_isTrial();
+
+bool _isTrial() =>
+    Get.isRegistered<HomeController>() &&
+    Get.find<HomeController>().isFreeTrialUser.value;
+
+void _showNoDietitianYet() {
+  CustomToast.warnToast(
+    "We're assigning your dietitian",
+    sub: "You'll get a message as soon as she's ready, then you can book your call.",
+    action: 'Contact us',
+    onAction: () => Get.to<dynamic>(() => const ReportIssueScreen()),
+  );
+}
+
 Future<void> _bookFollowUpFromContext(String popupVariable) async {
   final ctrl = Get.find<DietPlanUserController>();
-  // Idempotent — returns immediately if already loaded or in flight.
-  await ctrl.loadBookingContext();
+  // Always fresh: the right next step changes as she checks in / books.
+  await ctrl.loadBookingContext(refresh: true);
   final ctx = ctrl.bookingContext.value;
-  if (ctx != null && ctx.canBook) {
-    await BookConsultationSheet.show(
-      popupVariable: popupVariable,
-      dietitianId: ctx.dietitianId!,
-      userId: ctx.userId!,
-      userPlanId: ctx.userPlanId!,
-      kind: 'followup',
-    );
-    return;
+  final step = ctx?.nextStep ?? (ctx != null && ctx.canBook ? 'book_followup' : 'explore_plans');
+  switch (step) {
+    case 'book_initial':
+    case 'book_followup':
+      if (ctx != null && ctx.canBook) {
+        await BookConsultationSheet.show(
+          popupVariable: popupVariable,
+          dietitianId: ctx.dietitianId!,
+          userId: ctx.userId!,
+          userPlanId: ctx.userPlanId!,
+          kind: step == 'book_initial' ? 'initial' : 'followup',
+        );
+      } else if (_paidWithoutDietitian(ctx)) {
+        _showNoDietitianYet();
+      } else {
+        Get.to<dynamic>(() => OurPlansScreen());
+      }
+      break;
+    case 'day15_checkin':
+      // Day 15 progress is now the halfway weekly check-in (Oct 2026).
+      // Always opens (it used to do nothing when the plan id was missing).
+      await WeeklyCheckinSheet.open();
+      await ctrl.loadBookingContext(refresh: true);
+      break;
+    case 'locked':
+      await BookingLockedSheet.show();
+      break;
+    case 'followup_booked':
+      CustomToast.successToast(
+          msg: 'Your follow-up is booked. See it on your Diet tab.');
+      break;
+    case 'initial_booked':
+      CustomToast.successToast(
+          msg: 'Your consultation is booked. See it on your Diet tab.');
+      break;
+    case 'plan_preparing':
+      CustomToast.successToast(
+          msg: 'Your dietitian is preparing your plan. We will let you know when it is ready.');
+      break;
+    default: // renew, explore_plans
+      Get.to<dynamic>(() => OurPlansScreen());
   }
-  Get.to<dynamic>(() => OurPlansScreen());
+}
+
+/// Button label for the next step (banner + plan-ended card).
+String _nextStepCta(String? step) {
+  switch (step) {
+    case 'book_initial':
+      return 'Book consultation';
+    case 'day15_checkin':
+      return 'Do my check-in';
+    case 'locked':
+      return 'Contact us';
+    case 'followup_booked':
+      return 'Follow-up booked';
+    case 'initial_booked':
+      return 'Consultation booked';
+    case 'plan_preparing':
+      return 'Plan on its way';
+    case 'renew':
+      return 'Renew my plan';
+    case 'explore_plans':
+      return 'Explore plans';
+    default:
+      return 'Book follow-up';
+  }
 }
 
 Future<void> _onTimelineBookFollowUp(DietPlanUserController _) async {
@@ -197,7 +286,12 @@ class V2Day7TriggerBanner extends StatelessWidget {
 /// section provides padding internally so it can be dropped into a
 /// SingleChildScrollView or directly into a Scaffold body.
 class V2TodayMealsSection extends StatelessWidget {
-  const V2TodayMealsSection({super.key});
+  /// Paid clients on the Diet tab (Oct 2026): the hero's "today" card
+  /// already shows the day picker and the day summary, so the "plan
+  /// ending" card, the day strip and the day summary card are left out
+  /// here. Meal cards are unchanged.
+  final bool compact;
+  const V2TodayMealsSection({super.key, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -226,19 +320,19 @@ class V2TodayMealsSection extends StatelessWidget {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           ctrl.loadBookingContext();
         });
-        return _PlanEndedState(plan: plan);
+        // Oct 2026: paid package still running → keep showing her plan
+        // (repeat) with her next step on top, never an empty Diet tab.
+        if (!ctrl.isRepeating) return _PlanEndedState(plan: plan);
       }
       final today = ctrl.todaysDay;
       if (today == null) {
-        // Plan exists but today doesn't map to a day — usually means the
-        // plan was just activated and we're still ahead of `activatedAt`.
-        // Render the same "completed" copy fallback so the screen is
-        // never blank; the dietitian's view of dayNumber is the source
-        // of truth.
-        return _PlanEndedState(plan: plan);
+        // Dead-end audit (Oct 2026): plan starts later (activated for a
+        // future day) or today's day is missing — this used to say "Your
+        // plan is complete!". Say when it starts / that it's coming.
+        return _PlanStartsState(plan: plan);
       }
       // Phase G.1 — _LoadedState now drives day selection itself.
-      return _LoadedState(plan: plan);
+      return _LoadedState(plan: plan, compact: compact);
     });
   }
 }
@@ -327,17 +421,26 @@ class _NoPlanState extends StatelessWidget {
       );
       return;
     }
+    if (_paidWithoutDietitian(ctx)) {
+      _showNoDietitianYet();
+      return;
+    }
     // Brand-new user (no UserPlan yet) — they need to buy a plan
     // before a dietitian gets assigned, so route to the paywall.
     Get.to<dynamic>(() => OurPlansScreen());
   }
 
-  void _onTalkToSupport() {
-    Get.snackbar(
-      'Support',
-      'Open the chat tab to message your dietitian.',
-      snackPosition: SnackPosition.BOTTOM,
-    );
+  /// Trial with no plan (her free AI plan didn't get made): make it now.
+  Future<void> _onCreateTrialPlan() async {
+    final home = Get.find<HomeController>();
+    final ok = await home.submitTrialQuickIntake();
+    if (ok) {
+      await Get.find<DietPlanUserController>().loadActivePlan(refresh: true);
+      if (home.trialPlanPending.value) {
+        CustomToast.successToast(
+            msg: "Still preparing your plan. We'll send you a notification when it's ready.");
+      }
+    }
   }
 
   @override
@@ -361,6 +464,22 @@ class _NoPlanState extends StatelessWidget {
       }
       final appt = consultCtrl.upcomingAppointment.value;
       final hasPendingBooking = appt != null;
+      // Trial with no plan: her free plan, not a consultation (Oct 2026).
+      final trial = !hasPendingBooking && _isTrial();
+      final home = Get.isRegistered<HomeController>() ? Get.find<HomeController>() : null;
+      final creating = home?.trialQuickIntakeLoad.value == true;
+      // AI took longer than 6 s: being made in the background (Oct 2026).
+      final trialPreparing = trial && home?.trialPlanPending.value == true;
+
+      // Paid, no plan yet (Oct 2026): her journey in 5 steps, instead of a
+      // paragraph + "Talk to support". Booked: step 1 done, step 2 next.
+      if (!trial) {
+        return _JourneyCard(
+          booked: hasPendingBooking,
+          canBook: !hasPendingBooking && home?.planFrozen.value != true,
+          onBook: _onBookConsultation,
+        );
+      }
 
       return Padding(
         padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
@@ -376,7 +495,11 @@ class _NoPlanState extends StatelessWidget {
               SizedBox(height: 14.h),
               Center(
                 child: Text(
-                  hasPendingBooking ? 'PLAN ON THE WAY' : 'NO PLAN YET',
+                  hasPendingBooking
+                      ? 'PLAN ON THE WAY'
+                      : trial
+                          ? 'YOUR FREE PLAN'
+                          : 'NO PLAN YET',
                   style: TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 11.sp,
@@ -390,7 +513,11 @@ class _NoPlanState extends StatelessWidget {
               Text(
                 hasPendingBooking
                     ? 'Your consultation is booked'
-                    : "Your dietitian hasn't shared a plan yet",
+                    : trialPreparing
+                        ? 'Your plan is being prepared ✨'
+                        : trial
+                            ? "Your free meal plan isn't ready yet"
+                            : "Your dietitian hasn't shared a plan yet",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontFamily: 'Poppins',
@@ -408,9 +535,15 @@ class _NoPlanState extends StatelessWidget {
                         'build a personalized AI-powered meal plan around '
                         'your goals, cycle, and preferences — it will show '
                         'up right here.'
-                    : 'Book a consultation with your dietitian to get a '
-                        'personalized AI-powered meal plan tailored to your '
-                        'goals, cycle, and preferences.',
+                    : trialPreparing
+                        ? "It will be shared with you soon. We'll send you a "
+                            "notification as soon as it's ready."
+                        : trial
+                        ? "Let's make it now. It takes a few seconds and is "
+                            'built around your goals and cycle.'
+                        : 'Book a consultation with your dietitian to get a '
+                            'personalized AI-powered meal plan tailored to your '
+                            'goals, cycle, and preferences.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontFamily: 'Poppins',
@@ -420,20 +553,20 @@ class _NoPlanState extends StatelessWidget {
                 ),
               ),
               SizedBox(height: 18.h),
-              if (!hasPendingBooking)
+              if (trial)
+                V2PrimaryButton(
+                  label: creating
+                      ? 'Making your plan…'
+                      : (trialPreparing ? 'Check again' : 'Create my free plan'),
+                  leadingIcon: Icons.auto_awesome_rounded,
+                  onPressed: creating ? null : _onCreateTrialPlan,
+                )
+              else if (!hasPendingBooking && home?.planFrozen.value != true)
                 V2PrimaryButton(
                   label: 'Book a Consultation',
                   leadingIcon: Icons.event_note_rounded,
                   onPressed: _onBookConsultation,
                 ),
-              if (!hasPendingBooking) SizedBox(height: 6.h),
-              Center(
-                child: V2GhostButton(
-                  label: 'Talk to support',
-                  onPressed: _onTalkToSupport,
-                  fullWidth: false,
-                ),
-              ),
             ],
           ),
         ),
@@ -442,15 +575,92 @@ class _NoPlanState extends StatelessWidget {
   }
 }
 
-class _PlanEndedState extends StatelessWidget {
-  final DietPlanV2 plan;
-  const _PlanEndedState({required this.plan});
+/// "No plan yet" for paid clients: the dietitian journey as 5 steps,
+/// the current one highlighted, and one button.
+class _JourneyCard extends StatelessWidget {
+  final bool booked;
+  final bool canBook;
+  final VoidCallback onBook;
+  const _JourneyCard({required this.booked, required this.canBook, required this.onBook});
 
-  /// Phase F.3 — completed-plan path. Defers to the shared follow-up
-  /// helper so the Phase G.2 banner CTA and this empty-state button
-  /// route through the same lazy-load + fallback flow.
-  Future<void> _onBookFollowUp() async {
-    await _bookFollowUpFromContext('POPUP_PLAN_ENDED');
+  static const _green = Color(0xFF6DC55A);
+  static const _deep = Color(0xFF3E8E36);
+  static const _line = Color(0xFFDCE8D6);
+  static const _wash = Color(0xFFEAF6E4);
+
+  static const _steps = [
+    ('Book your call', 'A video call with your dietitian'),
+    ('Your plan is ready', 'Within 2 working days of your call'),
+    ('Day 7 check-in', 'Tell us how week 1 went, we tune it'),
+    ('Day 15 check-in', "Halfway: weight, energy, what's working"),
+    ('Follow-up call', 'Your dietitian plans your next 15 days'),
+  ];
+
+  TextStyle _t(double size, {FontWeight w = FontWeight.w400, Color c = _kHeroDark, double? h}) =>
+      TextStyle(fontFamily: 'Poppins', fontSize: size, fontWeight: w, color: c, height: h);
+
+  Widget _step(int i) {
+    final done = booked && i == 0;
+    final now = booked ? i == 1 : i == 0;
+    final last = i == _steps.length - 1;
+    final (title, sub) = _steps[i];
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 32.w,
+            child: Column(children: [
+              Container(
+                width: 30.w,
+                height: 30.w,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: done || now ? _green : Colors.white,
+                  border: done || now ? null : Border.all(color: _line, width: 1.5),
+                  boxShadow: now
+                      ? [BoxShadow(color: _green.withOpacity(0.25), blurRadius: 0, spreadRadius: 5)]
+                      : null,
+                ),
+                child: done
+                    ? Icon(Icons.check_rounded, size: 16.sp, color: Colors.white)
+                    : Text('${i + 1}',
+                        style: _t(13.sp, w: FontWeight.w700, c: now ? Colors.white : _kSage)),
+              ),
+              if (!last)
+                Expanded(child: Container(width: 2, margin: EdgeInsets.symmetric(vertical: 3.h), color: _line)),
+            ]),
+          ),
+          SizedBox(width: 12.w),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: last ? 0 : 14.h, top: 3.h),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 6.w,
+                    children: [
+                      Text(title, style: _t(14.sp, w: FontWeight.w700, c: now ? _deep : _kHeroDark, h: 1.3)),
+                      if (now)
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 1.h),
+                          decoration: BoxDecoration(color: _wash, borderRadius: BorderRadius.circular(20)),
+                          child: Text(booked ? 'NEXT' : 'YOU ARE HERE',
+                              style: _t(9.5.sp, w: FontWeight.w800, c: _deep)),
+                        ),
+                    ],
+                  ),
+                  Text(done ? 'Booked ✓' : sub, style: _t(12.sp, c: _kBodyMuted, h: 1.4)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -458,40 +668,100 @@ class _PlanEndedState extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
       child: _Card(
+        padding: EdgeInsets.fromLTRB(18.w, 20.h, 18.w, 18.h),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(children: [
+              Container(
+                width: 48.w,
+                height: 48.w,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: _wash, borderRadius: BorderRadius.circular(14)),
+                child: Text(booked ? '🗓️' : '🥗', style: TextStyle(fontSize: 24.sp)),
+              ),
+              SizedBox(width: 12.w),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(booked ? 'PLAN ON THE WAY' : 'NO PLAN YET',
+                      style: _t(10.5.sp, w: FontWeight.w800, c: _deep).copyWith(letterSpacing: 0.8)),
+                  SizedBox(height: 2.h),
+                  Text(booked ? 'Your call is booked' : 'Your plan starts with one call',
+                      style: _t(17.sp, w: FontWeight.w800, h: 1.25)),
+                ]),
+              ),
+            ]),
+            SizedBox(height: 12.h),
+            Text(
+              booked ? 'After your call, here\'s what happens:' : "Here's your journey with your dietitian:",
+              style: _t(13.sp, c: _kBodyMuted, h: 1.5),
+            ),
+            SizedBox(height: 14.h),
+            for (var i = 0; i < _steps.length; i++) _step(i),
+            if (canBook) ...[
+              SizedBox(height: 18.h),
+              V2PrimaryButton(
+                label: 'Book my call',
+                leadingIcon: Icons.event_note_rounded,
+                onPressed: onBook,
+              ),
+              SizedBox(height: 8.h),
+              Center(
+                child: Text('Pick a time that suits you · takes 1 minute',
+                    style: _t(11.5.sp, c: _kSage)),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Plan exists but today isn't one of its days yet (activated for a later
+/// day, or that day is missing). Dead-end audit Oct 2026: this used to
+/// show "Your plan is complete!".
+class _PlanStartsState extends StatelessWidget {
+  final DietPlanV2 plan;
+  const _PlanStartsState({required this.plan});
+
+  static const _weekday = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  static const _month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  @override
+  Widget build(BuildContext context) {
+    final start = plan.activatedAt?.toLocal();
+    final now = DateTime.now();
+    final future = start != null &&
+        DateTime(start.year, start.month, start.day)
+            .isAfter(DateTime(now.year, now.month, now.day));
+    final when = future
+        ? '${_weekday[start.weekday - 1]}, ${start.day} ${_month[start.month - 1]}'
+        : null;
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
+      child: _Card(
         padding: EdgeInsets.all(24.w),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Center(child: Text('🎉', style: TextStyle(fontSize: 48.sp))),
+            Center(child: Text('🗓️', style: TextStyle(fontSize: 48.sp))),
             SizedBox(height: 14.h),
-            Center(
-              child: Text(
-                'PLAN COMPLETED',
-                style: TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: 11.sp,
-                  fontWeight: FontWeight.w800,
-                  color: _kAccent,
-                  letterSpacing: 0.84,
-                ),
-              ),
-            ),
-            SizedBox(height: 8.h),
             Text(
-              'Your ${plan.planDays}-day plan is complete!',
+              when != null ? 'Your plan starts on $when' : 'Your plan is on its way',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: 'Poppins',
                 fontSize: 18.sp,
                 fontWeight: FontWeight.w800,
                 color: _kHeroDark,
-                letterSpacing: -0.2,
                 height: 1.3,
               ),
             ),
             SizedBox(height: 10.h),
             Text(
-              'Time to check in with your dietitian for your next plan.',
+              "Your meals for each day will show here from that day. "
+              'Pull down to refresh.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontFamily: 'Poppins',
@@ -500,11 +770,13 @@ class _PlanEndedState extends StatelessWidget {
                 height: 1.5,
               ),
             ),
-            SizedBox(height: 18.h),
-            V2PrimaryButton(
-              label: 'Book Follow-up Consultation',
-              leadingIcon: Icons.event_repeat_rounded,
-              onPressed: _onBookFollowUp,
+            SizedBox(height: 14.h),
+            Center(
+              child: V2GhostButton(
+                label: 'Talk to support',
+                onPressed: () => Get.to<dynamic>(() => HelpScreen()),
+                fullWidth: false,
+              ),
             ),
           ],
         ),
@@ -513,9 +785,158 @@ class _PlanEndedState extends StatelessWidget {
   }
 }
 
+class _PlanEndedState extends StatefulWidget {
+  final DietPlanV2 plan;
+  const _PlanEndedState({required this.plan});
+
+  @override
+  State<_PlanEndedState> createState() => _PlanEndedStateState();
+}
+
+/// Plan finished. What she sees next depends on where she is in her
+/// package (server's bookingContext.nextStep), so the button always
+/// leads somewhere that works: check-in before the follow-up, book the
+/// follow-up, renew, or (trial) explore plans.
+class _PlanEndedStateState extends State<_PlanEndedState> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        Get.find<DietPlanUserController>().loadBookingContext(refresh: true);
+      }
+    });
+  }
+
+  ({String title, String body}) _copy(String? step) {
+    final days = widget.plan.planDays;
+    switch (step) {
+      case 'explore_plans':
+        return (
+          title: 'Your free plan has ended',
+          body: 'Choose a plan to get a dietitian who builds your meals '
+              'around you.',
+        );
+      case 'renew':
+        return (
+          title: 'Your plan is complete!',
+          body: "You've had both consultations on this package. Renew to "
+              'keep going with your dietitian.',
+        );
+      case 'locked':
+        return (
+          title: 'Your $days-day plan is complete!',
+          body: 'Our team will book your next session with you.',
+        );
+      case 'book_initial':
+        return (
+          title: 'Your $days-day plan is complete!',
+          body: 'Book your consultation so your dietitian can make your '
+              'personal plan.',
+        );
+      case 'day15_checkin':
+        return (
+          title: 'Your $days-day plan is complete!',
+          body: 'Your next plan comes after a quick check-in. Tell us how '
+              "it went, then book your follow-up.",
+        );
+      case 'plan_preparing':
+        return (
+          title: 'Your $days-day plan is complete!',
+          body: 'Your dietitian is preparing your own plan. It will show '
+              'here as soon as it is ready.',
+        );
+      case 'initial_booked':
+        return (
+          title: 'Your $days-day plan is complete!',
+          body: 'Your consultation is booked. Your dietitian makes your '
+              'own plan after it.',
+        );
+      case 'followup_booked':
+        return (
+          title: 'Your $days-day plan is complete!',
+          body: 'Your follow-up is booked. Your next plan will be ready '
+              'within 2 working days of the session.',
+        );
+      default:
+        return (
+          title: 'Your $days-day plan is complete!',
+          body: 'Time to check in with your dietitian for your next plan.',
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ctrl = Get.find<DietPlanUserController>();
+    return Obx(() {
+      final step = ctrl.bookingContext.value?.nextStep;
+      final copy = _copy(step);
+      return Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
+        child: _Card(
+          padding: EdgeInsets.all(24.w),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(child: Text('🎉', style: TextStyle(fontSize: 48.sp))),
+              SizedBox(height: 14.h),
+              Center(
+                child: Text(
+                  'PLAN COMPLETED',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 11.sp,
+                    fontWeight: FontWeight.w800,
+                    color: _kAccent,
+                    letterSpacing: 0.84,
+                  ),
+                ),
+              ),
+              SizedBox(height: 8.h),
+              Text(
+                copy.title,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 18.sp,
+                  fontWeight: FontWeight.w800,
+                  color: _kHeroDark,
+                  letterSpacing: -0.2,
+                  height: 1.3,
+                ),
+              ),
+              SizedBox(height: 10.h),
+              Text(
+                copy.body,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 14.sp,
+                  color: _kBodyMuted,
+                  height: 1.5,
+                ),
+              ),
+              if (step != 'followup_booked') ...[
+                SizedBox(height: 18.h),
+                V2PrimaryButton(
+                  label: _nextStepCta(step),
+                  leadingIcon: Icons.event_repeat_rounded,
+                  onPressed: () => _bookFollowUpFromContext('POPUP_PLAN_ENDED'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    });
+  }
+}
+
 class _LoadedState extends StatelessWidget {
   final DietPlanV2 plan;
-  const _LoadedState({required this.plan});
+  final bool compact;
+  const _LoadedState({required this.plan, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -528,7 +949,7 @@ class _LoadedState extends StatelessWidget {
       final renderDay = day ?? ctrl.todaysDay;
       if (renderDay == null) return const SizedBox.shrink();
 
-      final showStrip = plan.planDays > 1;
+      final showStrip = plan.planDays > 1 && !compact;
       final viewState = ctrl.isViewingFuture
           ? _ViewState.future
           : ctrl.isViewingPast
@@ -549,7 +970,8 @@ class _LoadedState extends StatelessWidget {
             // Phase G.3 — Day 7 check-in trigger. Sits above the timeline
             // banner so it's the first thing the user sees after the
             // app bar. Hidden once submitted or dismissed for the cycle.
-            const V2Day7TriggerBanner(),
+            // Day 7 check-in banner removed (Oct 2026): week 1 of the
+            // weekly check-in (Home card) asks the Day 7 questions now.
             // Phase G.2 — plan progress + ending-soon CTA. Renders
             // nothing when the plan is already ended (F.1's Plan
             // Completed empty state takes over up the tree) — extra
@@ -558,7 +980,14 @@ class _LoadedState extends StatelessWidget {
             // The top hero already shows "Day X of Y" and days left, so
             // the big "Your plan" card only appears when it has something
             // new to say: the plan is ending soon (with its follow-up CTA).
-            if (!ctrl.isPlanEnded && ctrl.isPlanEndingSoon)
+            if (!compact && !ctrl.isPlanEnded && ctrl.isPlanEndingSoon)
+              Builder(builder: (_) {
+                // Banner label depends on her next step; load it once.
+                WidgetsBinding.instance.addPostFrameCallback(
+                    (_) => ctrl.loadBookingContext());
+                return const SizedBox.shrink();
+              }),
+            if (!compact && !ctrl.isPlanEnded && ctrl.isPlanEndingSoon)
               V2PlanTimelineBanner(
                 plan: plan,
                 todaysDayNumber: ctrl.todaysDayNumber,
@@ -568,6 +997,7 @@ class _LoadedState extends StatelessWidget {
                 onBookFollowUp: ctrl.isPlanEndingSoon
                     ? () => _onTimelineBookFollowUp(ctrl)
                     : null,
+                ctaLabel: _nextStepCta(ctrl.bookingContext.value?.nextStep),
               ),
             if (showStrip)
               Stack(
@@ -592,22 +1022,38 @@ class _LoadedState extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _DayHeader(
-                    plan: plan,
-                    day: renderDay,
-                    viewState: viewState,
-                    date: ctrl.dateForDay(renderDay.dayNumber),
-                    meals: meals,
-                  ),
-                  SizedBox(height: 14.h),
-                  for (var i = 0; i < meals.length; i++)
-                    _MealCard(
-                      meal: meals[i],
-                      dayNumber: renderDay.dayNumber,
+                  if (!compact) ...[
+                    _DayHeader(
+                      plan: plan,
+                      day: renderDay,
                       viewState: viewState,
-                      isFirst: i == 0,
-                      isLast: i == meals.length - 1,
+                      date: ctrl.dateForDay(renderDay.dayNumber),
+                      meals: meals,
                     ),
+                    SizedBox(height: 14.h),
+                  ],
+                  // Oct 2026: next step on top — while repeating her ended
+                  // plan, or in the last 2 days of a plan.
+                  _NextStepStrip(
+                    repeating: ctrl.isRepeating,
+                    daysLeft: ctrl.daysRemainingInPlan,
+                  ),
+                  // Oct 2026: AI plan with no dietitian (free trial / before
+                  // her consultation) = a GENERAL plan, not a personal one.
+                  if (plan.dietitianId == null) ...[
+                    const _GeneralPlanNote(),
+                    SizedBox(height: 12.h),
+                  ],
+                  _MealTimeline(
+                    key: ValueKey('meals-${renderDay.dayNumber}'),
+                    meals: meals,
+                    // Repeating: logs belong to TODAY's date, not the
+                    // original day's date.
+                    dayNumber: ctrl.isRepeating
+                        ? (ctrl.todaysDayNumber ?? renderDay.dayNumber)
+                        : renderDay.dayNumber,
+                    viewState: viewState,
+                  ),
                 ],
               ),
             ),
@@ -907,12 +1353,348 @@ String _prettyTime(String hhmm) {
   return '$h12:$m $suffix';
 }
 
+/// Next-step strip above the meals (Oct 2026).
+///   repeating: her plan ended, package still running — "keep following
+///              your plan" + what's next (check-in / book / booked / renew).
+///   daysLeft <= 1 (last 2 days of a plan): "Your plan ends …" + next step.
+/// Hidden otherwise, and for a free trial (it has its own prompts).
+class _NextStepStrip extends StatefulWidget {
+  final bool repeating;
+  final int? daysLeft;
+  const _NextStepStrip({required this.repeating, required this.daysLeft});
+
+  @override
+  State<_NextStepStrip> createState() => _NextStepStripState();
+}
+
+class _NextStepStripState extends State<_NextStepStrip> {
+  static const _weekday = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  static const _month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  bool get _ending => !widget.repeating && widget.daysLeft != null && widget.daysLeft! <= 1;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.repeating || _ending) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Get.find<DietPlanUserController>().loadBookingContext();
+      });
+    }
+  }
+
+  static String _d(DateTime d) => '${_weekday[d.weekday - 1]} ${d.day} ${_month[d.month - 1]}';
+
+  /// True while `UpcomingConsultationCard` (same tab, above this strip) is
+  /// visible with a booking prompt of its own: an upcoming session, or a
+  /// missed / canceled / expired one with "Pick a new time".
+  static bool _consultationCardShowsBooking() {
+    if (!Get.isRegistered<ConsultationController>()) return false;
+    final appt = Get.find<ConsultationController>().upcomingAppointment.value;
+    if (appt == null) return false;
+    return appt.status != 'completed';
+  }
+
+  Widget _stripCard(String title, String body, String? cta, dynamic ctx) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 12.h),
+      child: Container(
+        padding: EdgeInsets.fromLTRB(12.w, 10.h, 12.w, 10.h),
+        decoration: BoxDecoration(
+          color: _kCream,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _kCardBorder),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title,
+                style: TextStyle(fontFamily: 'Poppins', fontSize: 13.sp, fontWeight: FontWeight.w700, color: _kHeroDark)),
+            SizedBox(height: 2.h),
+            Text(body,
+                style: TextStyle(fontFamily: 'Poppins', fontSize: 11.5.sp, height: 1.45, color: _kBodyMuted)),
+            if (cta != null) ...[
+              SizedBox(height: 8.h),
+              V2PrimaryButton(
+                label: cta,
+                fullWidth: false,
+                onPressed: () => _bookFollowUpFromContext(
+                    widget.repeating ? 'POPUP_PLAN_ENDED' : 'POPUP_PLAN_ENDING_SOON'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.repeating && !_ending) return const SizedBox.shrink();
+    final ctrl = Get.find<DietPlanUserController>();
+    return Obx(() {
+      final ctx = ctrl.bookingContext.value;
+      final step = ctx?.nextStep;
+      if (ctx == null || step == null || step == 'explore_plans') return const SizedBox.shrink();
+      // Don't ask her to book twice (Oct 2026). When the consultation card
+      // above already shows her session — booked, or missed / canceled /
+      // expired with its own "Pick a new time" — this strip's "Book
+      // consultation" / "Book follow-up" is the same ask a second time.
+      // The card is hidden only when there is no current appointment or
+      // it is completed; in both of those cases the strip still shows.
+      if ((step == 'book_initial' || step == 'book_followup') && _consultationCardShowsBooking()) {
+        return const SizedBox.shrink();
+      }
+      final ends = ctx.packageEndsOn;
+      final now = DateTime.now();
+      final endsSoon = ends != null && ends.difference(now).inDays < 5;
+      final opens = ctx.halfwayOpensOn;
+      final notOpenYet = step == 'day15_checkin' && opens != null && opens.isAfter(now);
+
+      // Starter plan (made without a dietitian: free trial, or a paid
+      // client before her first consultation). Its end is NOT her package
+      // ending, so never "Do my check-in" / "book your follow-up" here.
+      final starter = ctrl.activePlan.value?.dietitianId == null;
+      final title = widget.repeating
+          ? 'Keep going with your plan 🔁'
+          : starter
+              ? (widget.daysLeft == 0 ? 'Your starter plan ends today' : 'Your starter plan ends tomorrow')
+              : (widget.daysLeft == 0 ? 'Your plan ends today' : 'Your plan ends tomorrow');
+      String body;
+      String? cta;
+      if (starter && !widget.repeating) {
+        if (step == 'book_initial') {
+          body = 'Book your consultation so your dietitian can make your own plan.';
+          cta = 'Book consultation';
+        } else {
+          body = step == 'initial_booked'
+              ? 'Your own plan comes after your consultation. See your booking above.'
+              : step == 'plan_preparing'
+                  ? 'Your dietitian is preparing your own plan. It shows here when it is ready.'
+                  : 'Your dietitian shares your own plan after your consultation.';
+        }
+        return _stripCard(title, body, cta, ctx);
+      }
+      switch (step) {
+        case 'initial_booked':
+          body = 'Your consultation is booked. Your own plan comes after it.';
+          break;
+        case 'plan_preparing':
+          body = 'Your dietitian is preparing your own plan.';
+          break;
+        case 'day15_checkin':
+          body = notOpenYet
+              ? 'Your check-in opens on ${_d(opens)}. Then you can book your follow-up for your next plan.'
+              : 'Do your check-in, then book your follow-up for your next plan.';
+          cta = notOpenYet ? null : 'Do my check-in';
+          break;
+        case 'book_followup':
+          body = 'Book your follow-up to get your next plan.';
+          cta = 'Book follow-up';
+          break;
+        case 'book_initial':
+          body = 'Book your consultation to get your own plan.';
+          cta = 'Book consultation';
+          break;
+        case 'followup_booked':
+          body = 'Your follow-up is booked. Your new plan comes after it.';
+          break;
+        case 'locked':
+          body = 'Contact us to book your next session.';
+          cta = 'Contact us';
+          break;
+        case 'renew':
+          if (endsSoon) {
+            body = 'Your package ends on ${_d(ends)}. Renew to keep going with your dietitian.';
+            cta = 'Renew my plan';
+          } else {
+            body = ends != null
+                ? "You've had both consultations. Keep following your plan until your package ends on ${_d(ends)}."
+                : "You've had both consultations. Keep following your plan.";
+          }
+          break;
+        default:
+          body = 'Keep following your plan until your next one comes.';
+      }
+      if (widget.repeating && step != 'renew') {
+        body = 'Your ${ctrl.activePlan.value?.planDays ?? ''}-day plan starts again from Day 1 until your next plan. $body';
+      }
+      // Plan paused: no booking / check-in button (Oct 2026).
+      if (Get.isRegistered<HomeController>() && Get.find<HomeController>().planFrozen.value) {
+        cta = null;
+      }
+      return _stripCard(title, body, cta, ctx);
+    });
+  }
+}
+
+/// Shown above the meals when the plan was made by AI without a dietitian
+/// (free trial, or a paid client before her consultation). Oct 2026.
+class _GeneralPlanNote extends StatelessWidget {
+  const _GeneralPlanNote();
+
+  @override
+  Widget build(BuildContext context) {
+    final trial = _isTrial();
+    return Container(
+      padding: EdgeInsets.fromLTRB(12.w, 10.h, 12.w, 10.h),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8EC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFF1DFB8)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline_rounded, size: 18.w, color: const Color(0xFF8A5A06)),
+          SizedBox(width: 8.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Your starter plan 🌱',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 12.5.sp,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF5C3D05),
+                  ),
+                ),
+                SizedBox(height: 2.h),
+                Text(
+                  // Short and friendly (Oct 2026): general plan, not personal;
+                  // health-condition caution in one line.
+                  'A general plan to get you started. '
+                  '${trial ? 'Choose a plan for one made just for you.' : 'Your dietitian will make one just for you after your call.'}'
+                  ' Health condition? Check with your doctor first.',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 11.sp,
+                    height: 1.45,
+                    color: const Color(0xFF8A5A06),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Meal list (Oct 2026): only one meal card is open at a time.
+/// Today: the meal for the current time in her time zone is open (the
+/// last meal whose time has come; before breakfast, the first meal) and
+/// it moves on by itself as the day goes. Other days: the first meal.
+/// Tapping a closed card opens it and closes the others.
+class _MealTimeline extends StatefulWidget {
+  final List<DietPlanMealV2> meals;
+  final int dayNumber;
+  final _ViewState viewState;
+  const _MealTimeline({
+    super.key,
+    required this.meals,
+    required this.dayNumber,
+    required this.viewState,
+  });
+
+  @override
+  State<_MealTimeline> createState() => _MealTimelineState();
+}
+
+class _MealTimelineState extends State<_MealTimeline> {
+  /// The card she tapped open; null = follow the clock.
+  int? _picked;
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    // Re-check once a minute so the open card follows the clock.
+    _tick = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted && _picked == null && widget.viewState == _ViewState.today) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _MealTimeline old) {
+    super.didUpdateWidget(old);
+    if (old.viewState != widget.viewState) _picked = null;
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  static int? _minutes(String hhmm) {
+    final parts = hhmm.split(':');
+    if (parts.length < 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1].padLeft(2, '0').substring(0, 2));
+    if (h == null || m == null) return null;
+    return h * 60 + m;
+  }
+
+  int _nowMinutes() {
+    DateTime now;
+    try {
+      final zone = Get.find<DietPlanUserController>().auth.userTimeZone;
+      now = tz.TZDateTime.now(tz.getLocation(zone));
+    } catch (_) {
+      now = DateTime.now();
+    }
+    return now.hour * 60 + now.minute;
+  }
+
+  int _clockIndex() {
+    if (widget.viewState != _ViewState.today) return 0;
+    final now = _nowMinutes();
+    var idx = 0;
+    for (var i = 0; i < widget.meals.length; i++) {
+      final t = _minutes(widget.meals[i].time);
+      if (t != null && t <= now) idx = i;
+    }
+    return idx;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final open = _picked ?? _clockIndex();
+    final meals = widget.meals;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < meals.length; i++)
+          _MealCard(
+            meal: meals[i],
+            dayNumber: widget.dayNumber,
+            viewState: widget.viewState,
+            isFirst: i == 0,
+            isLast: i == meals.length - 1,
+            expanded: i == open,
+            onExpand: () => setState(() => _picked = i),
+          ),
+      ],
+    );
+  }
+}
+
 class _MealCard extends StatelessWidget {
   final DietPlanMealV2 meal;
   final int dayNumber;
   final _ViewState viewState;
   final bool isFirst;
   final bool isLast;
+  /// Open = full card (tip + log button). Closed = type, kcal and name;
+  /// tapping a closed card opens it instead of the log sheet.
+  final bool expanded;
+  final VoidCallback? onExpand;
 
   const _MealCard({
     required this.meal,
@@ -920,6 +1702,8 @@ class _MealCard extends StatelessWidget {
     required this.viewState,
     this.isFirst = false,
     this.isLast = false,
+    this.expanded = true,
+    this.onExpand,
   });
 
   void _openSheet(DietPlanUserController ctrl) {
@@ -954,10 +1738,12 @@ class _MealCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final ctrl = Get.find<DietPlanUserController>();
     return Obx(() {
+      // Read the log on every day (even future ones) so this Obx always
+      // listens to something — GetX throws if an Obx reads nothing.
+      final logged = ctrl.getLogForMeal(dayNumber, meal.mealType.wire)?.status;
       final status = viewState == _ViewState.future
           ? MealLogStatusV2.pending
-          : (ctrl.getLogForMeal(dayNumber, meal.mealType.wire)?.status ??
-              MealLogStatusV2.pending);
+          : (logged ?? MealLogStatusV2.pending);
       final dotColor = _statusColor(status);
       final tip = (meal.notes ?? '').trim();
 
@@ -1014,7 +1800,9 @@ class _MealCard extends StatelessWidget {
                 child: Material(
                   color: Colors.transparent,
                   child: InkWell(
-                    onTap: () => _openSheet(ctrl),
+                    onTap: expanded || onExpand == null
+                        ? () => _openSheet(ctrl)
+                        : onExpand,
                     borderRadius: BorderRadius.circular(20),
                     child: _Card(
                       padding: EdgeInsets.all(14.w),
@@ -1068,10 +1856,13 @@ class _MealCard extends StatelessWidget {
                           SizedBox(height: 10.h),
                           Text(
                             meal.foodName,
+                            maxLines: expanded ? null : 1,
+                            overflow: expanded ? null : TextOverflow.ellipsis,
+                            // Oct 2026: 14 semi-bold (was 15 bold, too heavy).
                             style: TextStyle(
                               fontFamily: 'Poppins',
-                              fontSize: 15.sp,
-                              fontWeight: FontWeight.w700,
+                              fontSize: 14.sp,
+                              fontWeight: FontWeight.w600,
                               color: status == MealLogStatusV2.skipped
                                   ? _kSage
                                   : _kHeroDark,
@@ -1081,7 +1872,7 @@ class _MealCard extends StatelessWidget {
                               height: 1.35,
                             ),
                           ),
-                          if (tip.isNotEmpty) ...[
+                          if (expanded && tip.isNotEmpty) ...[
                             SizedBox(height: 8.h),
                             Container(
                               width: double.infinity,
@@ -1102,8 +1893,10 @@ class _MealCard extends StatelessWidget {
                               ),
                             ),
                           ],
-                          SizedBox(height: 10.h),
-                          _actionRow(status),
+                          if (expanded) ...[
+                            SizedBox(height: 10.h),
+                            _actionRow(status),
+                          ],
                         ],
                       ),
                     ),
@@ -1281,7 +2074,8 @@ class _MealLogSheetBodyState extends State<_MealLogSheetBody> {
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
-                meal.time,
+                // Same 12-hour time as the meal list (4:30 PM, not 16:30).
+                _prettyTime(meal.time),
                 style: TextStyle(
                   fontFamily: 'Poppins',
                   fontSize: 11.sp,
@@ -1303,12 +2097,14 @@ class _MealLogSheetBodyState extends State<_MealLogSheetBody> {
           ],
         ),
         SizedBox(height: 12.h),
+        // Sheet sizes (Oct 2026): name 16 (was 18, bigger than the
+        // buttons below it), note 12.5 (was 13).
         Text(
           meal.foodName,
           style: TextStyle(
             fontFamily: 'Poppins',
-            fontSize: 18.sp,
-            fontWeight: FontWeight.w800,
+            fontSize: 16.sp,
+            fontWeight: FontWeight.w700,
             color: _kHeroDark,
             height: 1.3,
           ),
@@ -1319,7 +2115,7 @@ class _MealLogSheetBodyState extends State<_MealLogSheetBody> {
             meal.notes!.trim(),
             style: TextStyle(
               fontFamily: 'Poppins',
-              fontSize: 13.sp,
+              fontSize: 12.5.sp,
               color: _kBodyMuted,
               height: 1.5,
             ),
@@ -1810,7 +2606,8 @@ class _MealMeta extends StatelessWidget {
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
-                meal.time,
+                // Same 12-hour time as the meal list (4:30 PM, not 16:30).
+                _prettyTime(meal.time),
                 style: TextStyle(
                   fontFamily: 'Poppins',
                   fontSize: 11.sp,
@@ -1832,12 +2629,14 @@ class _MealMeta extends StatelessWidget {
           ],
         ),
         SizedBox(height: 12.h),
+        // Sheet sizes (Oct 2026): name 16 (was 18, bigger than the
+        // buttons below it), note 12.5 (was 13).
         Text(
           meal.foodName,
           style: TextStyle(
             fontFamily: 'Poppins',
-            fontSize: 18.sp,
-            fontWeight: FontWeight.w800,
+            fontSize: 16.sp,
+            fontWeight: FontWeight.w700,
             color: _kHeroDark,
             height: 1.3,
           ),
@@ -1848,7 +2647,7 @@ class _MealMeta extends StatelessWidget {
             meal.notes!.trim(),
             style: TextStyle(
               fontFamily: 'Poppins',
-              fontSize: 13.sp,
+              fontSize: 12.5.sp,
               color: _kBodyMuted,
               height: 1.5,
             ),

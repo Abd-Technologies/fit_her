@@ -14,6 +14,7 @@ import '../../Repos/home_repo/home_repo.dart';
 import '../../models/api_response/api_response_model.dart';
 import '../../models/get_all_dietitian_trainers/get_diet_plan_details.dart';
 import '../../models/get_all_users/get_user_progress_model.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class ProgressController extends GetxController implements GetxService {
   SharedPreferences sharedPreferences;
@@ -81,7 +82,7 @@ class ProgressController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()),
+        Get.dialog(const Center(child: FhLoader()),
             barrierDismissible: false);
 
         await homeRepo.addProgressImages(

@@ -58,8 +58,8 @@ class HeroTopBar extends StatelessWidget {
                   child: const Text('🔔', style: TextStyle(fontSize: 13)),
                 ),
                 Positioned(
-                  top: 1,
-                  right: 1,
+                  top: -2,
+                  right: -2,
                   child: Obx(() {
                     final show = Get.isRegistered<HomeController>()
                         ? Get.find<HomeController>().showDotHome.value
@@ -105,13 +105,15 @@ class _NotificationDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 10px, thin border: was 6px with a 2px border, so only a 2px red
+    // speck showed and the dot looked missing (Oct 2026).
     return Container(
-      width: 6,
-      height: 6,
+      width: 10,
+      height: 10,
       decoration: BoxDecoration(
-        color: const Color(0xFFE24B4A),
+        color: const Color(0xFFFF4D4D),
         shape: BoxShape.circle,
-        border: Border.all(color: const Color(0xFF163220), width: 2),
+        border: Border.all(color: const Color(0xFF163220), width: 1.5),
       ),
     );
   }

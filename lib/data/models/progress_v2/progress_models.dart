@@ -171,6 +171,10 @@ class WeightTrend {
   final List<WeightHistoryPoint> history;
   final List<PhaseSegmentJson> phaseSegments;
   final List<WeightProjectionPoint> projection;
+  /// All time (Oct 2026): her first weigh-in date and how many she logged.
+  /// Null / 0 from an older server.
+  final String? firstWeighInDate;
+  final int weighIns;
 
   const WeightTrend({
     this.window = const PeriodWindow(),
@@ -180,6 +184,8 @@ class WeightTrend {
     this.history = const [],
     this.phaseSegments = const [],
     this.projection = const [],
+    this.firstWeighInDate,
+    this.weighIns = 0,
   });
 
   factory WeightTrend.empty() => const WeightTrend();
@@ -192,6 +198,8 @@ class WeightTrend {
         history: _parseList(json['history'], WeightHistoryPoint.fromJson),
         phaseSegments: _parseList(json['phaseSegments'], PhaseSegmentJson.fromJson),
         projection: _parseList(json['projection'], WeightProjectionPoint.fromJson),
+        firstWeighInDate: json['firstWeighInDate']?.toString(),
+        weighIns: (json['weighIns'] is num) ? (json['weighIns'] as num).toInt() : 0,
       );
 }
 

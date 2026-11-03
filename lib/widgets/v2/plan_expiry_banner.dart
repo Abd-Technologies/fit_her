@@ -1,3 +1,4 @@
+import '../../helper/analytics_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
@@ -5,6 +6,7 @@ import 'package:get/get.dart';
 import '../../UI/plans_module/all_plans.dart';
 import '../../data/Repos/user_plan_repo/user_plan_repository.dart';
 import '../../data/controllers/auth_controller/auth_controller.dart';
+import '../../data/controllers/home_controller/home_controller.dart';
 import '../../data/models/user_plan/user_plan_item.dart';
 import '../../utils/plan_expiry.dart';
 import '../../values/constants.dart';
@@ -58,11 +60,28 @@ class _PlanExpiryBannerState extends State<PlanExpiryBanner> {
       final repo = Get.find<UserPlanRepository>();
       final res = await repo.getMyPlans(accessToken: token);
 
+      // Her LATEST paid plan, not simply the first row: the list can start
+      // with an old expired plan (or the trial plan) while a newer one is
+      // live, which showed "Your plan has ended" by mistake (Oct 2026).
+      // Trial / system plans are skipped (the trial has its own cards),
+      // and nothing shows while her free trial is running.
       UserPlanItem? plan;
-      if (res.body != null && res.body['status'] == '1') {
+      final onTrial = Get.isRegistered<HomeController>() &&
+          (Get.find<HomeController>().trialLive.value ||
+              Get.find<HomeController>().isFreeTrialUser.value);
+      if (!onTrial && res.body != null && res.body['status'] == '1') {
         final raw = res.body['data'];
-        if (raw is List && raw.isNotEmpty && raw.first is Map) {
-          plan = UserPlanItem.fromJson(Map<String, dynamic>.from(raw.first));
+        if (raw is List) {
+          for (final row in raw) {
+            if (row is! Map) continue;
+            final p = UserPlanItem.fromJson(Map<String, dynamic>.from(row));
+            final title = (p.plan?.title ?? '').trim().toLowerCase();
+            if (title.contains('trial') || title.startsWith('system')) continue;
+            if (p.cancelledAt != null || p.expireDate == null) continue;
+            if (plan == null || p.expireDate!.isAfter(plan.expireDate!)) {
+              plan = p;
+            }
+          }
         }
       }
       if (mounted) {
@@ -90,12 +109,12 @@ class _PlanExpiryBannerState extends State<PlanExpiryBanner> {
     final isExpired = daysRemaining < 0;
     final accent = isExpired ? _kDanger : _kAmber;
     final message = isExpired
-        ? 'Your plan has expired -- renew to get back to your sessions'
+        ? 'Your plan has ended. Your meal plan stays here for you. Renew to get your dietitian and live classes back.'
         : daysRemaining == 0
-            ? 'Your plan expires today -- renew to keep your spot'
+            ? 'Your plan ends today. Renew to keep your spot.'
             : daysRemaining == 1
-                ? 'Your plan expires tomorrow -- renew to keep your spot'
-                : 'Your plan expires in $daysRemaining days -- renew to keep your spot';
+                ? 'Your plan ends tomorrow. Renew to keep your spot.'
+                : 'Your plan ends in $daysRemaining days. Renew to keep your spot.';
 
     return Padding(
       padding: EdgeInsets.fromLTRB(16.w, 8.h, 16.w, 0),
@@ -131,7 +150,10 @@ class _PlanExpiryBannerState extends State<PlanExpiryBanner> {
             PrimaryPillButton(
               label: isExpired ? 'Renew Now' : 'Renew',
               color: accent,
-              onTap: () => Get.to(() => OurPlansScreen()),
+              onTap: () {
+                AnalyticsHelper.offerTapped('renew_banner');
+                Get.to(() => OurPlansScreen());
+              },
             ),
           ],
         ),

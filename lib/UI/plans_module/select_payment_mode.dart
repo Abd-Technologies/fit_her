@@ -1,3 +1,4 @@
+import '../../helper/analytics_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -70,6 +71,7 @@ class SelectPaymentMode extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    AnalyticsHelper.checkoutStarted(price: price);
     return Scaffold(
       backgroundColor: _kCanvas,
       appBar: HelpingWidgets().appBarWidget(() {
@@ -109,7 +111,10 @@ class SelectPaymentMode extends StatelessWidget {
                 icon: Icons.bolt_rounded,
                 accent: _kAccent,
                 badge: 'Recommended',
-                onTap: () => _showDirectPayPhoneDialog(context),
+                onTap: () {
+                  AnalyticsHelper.paymentMethodChosen('directpay');
+                  _showDirectPayPhoneDialog(context);
+                },
               ),
               const SizedBox(height: 12),
               _methodCard(
@@ -119,7 +124,10 @@ class SelectPaymentMode extends StatelessWidget {
                     'few hours.',
                 icon: Icons.receipt_long_outlined,
                 accent: _kTextPrimary,
-                onTap: _openUploadSlip,
+                onTap: () {
+                  AnalyticsHelper.paymentMethodChosen('slip');
+                  _openUploadSlip();
+                },
               ),
               const Spacer(),
               const _AmountFooter(),

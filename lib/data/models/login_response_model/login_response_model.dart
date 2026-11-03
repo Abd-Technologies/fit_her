@@ -26,6 +26,8 @@ class LoginModel extends Serializable {
   String? bmiResult;
   String? mainGoal;
   String? healthConditions;
+  // Finished the sign-up questions. Null = older server (see SignupProgress).
+  bool? onboardingDone;
   // Option-C feature flags. Backend always returns these; fromJson defaults
   // to false when missing (older clients / offline JSON caches).
   bool useNewPaidHome;
@@ -57,6 +59,7 @@ class LoginModel extends Serializable {
     this.bmiResult,
     this.mainGoal,
     this.healthConditions,
+    this.onboardingDone,
     this.useNewPaidHome = false,
     this.useNewUnpaidHome = false,
     this.useNewProgressHub = false,
@@ -79,6 +82,7 @@ class LoginModel extends Serializable {
         bmiResult: json["bmiResult"],
         mainGoal: json["mainGoal"],
         healthConditions: json["healthConditions"],
+        onboardingDone: json["onboardingDone"] is bool ? json["onboardingDone"] as bool : null,
         useNewPaidHome: json["useNewPaidHome"] ?? false,
         useNewUnpaidHome: json["useNewUnpaidHome"] ?? false,
         useNewProgressHub: json["useNewProgressHub"] ?? false,
@@ -98,6 +102,7 @@ class LoginModel extends Serializable {
         "accessToken": accessToken,
         "mainGoal": mainGoal,
         "healthConditions": healthConditions,
+        if (onboardingDone != null) "onboardingDone": onboardingDone,
         "useNewPaidHome": useNewPaidHome,
         "useNewUnpaidHome": useNewUnpaidHome,
         "useNewProgressHub": useNewProgressHub,

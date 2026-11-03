@@ -258,6 +258,8 @@ class DietPlanV2 {
   final int mealsPerDay;
   final DietPlanStatusV2 status;
   final String? summary;
+  /// Nov 2026: the dietitian's note to her, shown at the top of her plan.
+  final String? clientNote;
   final DateTime? activatedAt;
   final DateTime? completedAt;
   final DateTime? cancelledAt;
@@ -277,6 +279,7 @@ class DietPlanV2 {
     required this.mealsPerDay,
     required this.status,
     this.summary,
+    this.clientNote,
     this.activatedAt,
     this.completedAt,
     this.cancelledAt,
@@ -329,6 +332,7 @@ class DietPlanV2 {
       mealsPerDay: _toInt(json['mealsPerDay']) ?? 0,
       status: dietPlanStatusFromString(json['status']?.toString()),
       summary: json['summary']?.toString(),
+      clientNote: (json['clientNote']?.toString().trim().isNotEmpty ?? false) ? json['clientNote'].toString().trim() : null,
       activatedAt: _toDate(json['activatedAt']),
       completedAt: _toDate(json['completedAt']),
       cancelledAt: _toDate(json['cancelledAt']),
@@ -370,6 +374,7 @@ class DietPlanV2 {
     int? mealsPerDay,
     DietPlanStatusV2? status,
     String? summary,
+    String? clientNote,
     DateTime? activatedAt,
     DateTime? completedAt,
     DateTime? cancelledAt,
@@ -389,6 +394,7 @@ class DietPlanV2 {
       mealsPerDay: mealsPerDay ?? this.mealsPerDay,
       status: status ?? this.status,
       summary: summary ?? this.summary,
+      clientNote: clientNote ?? this.clientNote,
       activatedAt: activatedAt ?? this.activatedAt,
       completedAt: completedAt ?? this.completedAt,
       cancelledAt: cancelledAt ?? this.cancelledAt,

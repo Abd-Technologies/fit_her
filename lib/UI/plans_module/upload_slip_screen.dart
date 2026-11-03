@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import '../dashboard_module/bottom_bar_screen/bottom_bar_screen.dart';
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -11,6 +12,9 @@ import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.
 import 'package:fitness_zone_2/helper/permissions.dart';
 import 'package:fitness_zone_2/values/my_imgs.dart';
 import 'package:fitness_zone_2/widgets/app_bar_widget.dart';
+import 'package:fitness_zone_2/widgets/anim/check_draw.dart';
+import 'package:fitness_zone_2/widgets/custom_button.dart';
+import 'package:fitness_zone_2/values/my_colors.dart';
 import 'package:fitness_zone_2/widgets/toasts.dart';
 
 /// Dedicated "upload payment slip" screen — the manual-payment branch of
@@ -31,6 +35,11 @@ class UploadSlipScreen extends StatelessWidget {
 
   final HomeController homeController = Get.find();
 
+  // Opens Camera / Gallery by itself once, right after the screen comes in
+  // (Oct 2026), so she can go straight on. (Holder: this is a stateless
+  // widget, so the "already opened" flag lives in a final list.)
+  final List<bool> _autoOpened = [false];
+
   static const _kCanvas = Color(0xFFF9FCF7);
   static const _kCardBorder = Color(0xFFEFF4EC);
   static const _kIconWashBg = Color(0xFFF6FBF3);
@@ -41,6 +50,15 @@ class UploadSlipScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    if (!_autoOpened[0] && homeController.planPicture == null) {
+      _autoOpened[0] = true;
+      // Wait for the page slide to finish, then show Camera / Gallery.
+      Future.delayed(const Duration(milliseconds: 450), () {
+        if (context.mounted && homeController.planPicture == null) {
+          _selectMediaBottomSheet(context);
+        }
+      });
+    }
     return Scaffold(
       backgroundColor: _kCanvas,
       appBar: HelpingWidgets().appBarWidget(() {
@@ -75,6 +93,8 @@ class UploadSlipScreen extends StatelessWidget {
                   height: 1.5,
                 ),
               ),
+              // Fit Her accounts are NOT shown in the app for now (Google Play
+              // payments policy). Re-enable with: PaymentAccountsCard(price: price)
               const SizedBox(height: 20),
               Expanded(
                 child: GetBuilder<HomeController>(builder: (cont) {
@@ -160,17 +180,8 @@ class UploadSlipScreen extends StatelessWidget {
                   final success = await homeController.addPlanBuyImage(
                       planId, durationId, price);
                   if (success) {
-                    HelpingWidgets.showCustomDialog(context, () {
-                      Get.back();
-                      Get.back(); // close upload screen
-                      Get.back(); // close payment-method picker
-                    },
-                        "Successfully Uploaded!",
-                        "Our team is reviewing your payment, and you will "
-                            "receive a confirmation shortly. Please wait "
-                            "for approval.",
-                        MyImgs.logo,
-                        buttonText: "OK");
+                    if (!context.mounted) return;
+                    _showUploadedDialog(context);
                   }
                 },
                 child: Container(
@@ -352,5 +363,98 @@ class UploadSlipScreen extends StatelessWidget {
     homeController.update();
     Get.find<AuthController>().i++;
     Get.find<AuthController>().update();
+  }
+
+  /// "Successfully Uploaded!" box with a self-drawing tick. OK goes back
+  /// to the same screen as before (below the payment-method picker), but
+  /// in ONE transition instead of three pops one after another.
+  void _showUploadedDialog(BuildContext screenContext) {
+    final textTheme = Theme.of(screenContext).textTheme;
+    // Oct 2026: the AI verified the slip and her plan is already on.
+    final auto = Get.find<HomeController>().lastSlipAutoApproved.value;
+    showDialog(
+      context: screenContext,
+      builder: (dialogContext) => Dialog(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const FhCheckDraw(76, _kAccent),
+              const SizedBox(height: 14),
+              Text(
+                auto ? "Payment verified 🎉" : "Successfully Uploaded!",
+                style: textTheme.bodyMedium!.copyWith(
+                    color: MyColors.black, fontWeight: FontWeight.w600),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                auto
+                    ? "Welcome to Fit Her! Your plan is active now."
+                    : "Our team is reviewing your payment, and you will "
+                        "receive a confirmation shortly. Please wait "
+                        "for approval.",
+                style: textTheme.titleLarge!.copyWith(
+                    fontSize: 13,
+                    color: MyColors.black.withOpacity(0.5),
+                    fontWeight: FontWeight.w400),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 30),
+              Row(
+                children: [
+                  Expanded(
+                    child: CustomButton(
+                      text: auto ? "Let's start" : "OK",
+                      // Plan active: "Let's start" goes to her (paid) home.
+                      onPressed: () => auto
+                          ? Get.offAll(() => BottomBarScreen(index: 0))
+                          : _closeToOrigin(screenContext, dialogContext),
+                      height: 40,
+                      fontSize: 14,
+                      roundCorner: 25,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Same destination as the old Get.back() x3 (dialog, this screen,
+  /// payment-method picker), but the picker is removed silently first so
+  /// she sees a single smooth move back.
+  void _closeToOrigin(BuildContext screenContext, BuildContext dialogContext) {
+    final dialogNav = Navigator.maybeOf(dialogContext);
+    if (dialogNav == null || !screenContext.mounted) {
+      Get.back();
+      Get.back(); // close upload screen
+      Get.back(); // close payment-method picker
+      return;
+    }
+    dialogNav.pop(); // close the dialog
+    final nav = Navigator.maybeOf(screenContext);
+    final route = ModalRoute.of(screenContext);
+    if (nav == null || route == null || !route.isActive) {
+      Get.back(); // close upload screen
+      Get.back(); // close payment-method picker
+      return;
+    }
+    try {
+      nav.removeRouteBelow(route); // payment-method picker, no animation
+    } catch (_) {
+      Get.back(); // close upload screen
+      Get.back(); // close payment-method picker
+      return;
+    }
+    nav.pop(); // this screen: the one visible transition
   }
 }

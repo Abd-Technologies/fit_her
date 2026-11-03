@@ -118,6 +118,8 @@ class _ProgressSubmissionSheetState extends State<ProgressSubmissionSheet> {
   @override
   void initState() {
     super.initState();
+    // Rebuild on typing so the "x of N answered" count updates.
+    _weight.addListener(() { if (mounted) setState(() {}); });
     // Marker line — if this never shows up in logcat when the sheet is
     // opened, the widget tree never reached this file at all (stale
     // build / a different widget being shown), which is a completely
@@ -277,6 +279,25 @@ class _ProgressSubmissionSheetState extends State<ProgressSubmissionSheet> {
     );
   }
 
+  // Required questions, so Submit can say "1 of 3 answered".
+  final _weightKey = GlobalKey();
+  final _clothesKey = GlobalKey();
+  final _satisfactionKey = GlobalKey();
+
+  List<MapEntry<GlobalKey, bool>> get _required => [
+        MapEntry(_weightKey, _weight.text.trim().isNotEmpty),
+        if (_showsDiet) MapEntry(_clothesKey, _clothesFit != null),
+        if (_showsDiet) MapEntry(_satisfactionKey, _satisfaction != null),
+      ];
+
+  void _nudgeMissing() {
+    final miss = _required.firstWhere((e) => !e.value);
+    final ctx = miss.key.currentContext;
+    if (ctx != null) {
+      Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300), alignment: 0.2);
+    }
+  }
+
   bool get _canSubmit {
     // Minimum required: weight. Other measurements are optional but
     // strongly encouraged. Diet section requires clothesFit.
@@ -396,11 +417,42 @@ class _ProgressSubmissionSheetState extends State<ProgressSubmissionSheet> {
 
         // ── Measurements grid ─────────────────────────────
         const SizedBox(height: 22),
-        const _SectionHeader('Measurements'),
+        // Same card + header look as the Log measurements screen.
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFFEFF4EC)),
+            boxShadow: [
+              BoxShadow(color: const Color(0xFF1A3A22).withValues(alpha: 0.04), offset: const Offset(0, 4), blurRadius: 14),
+            ],
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            width: 32,
+            height: 32,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: const Color(0xFFF6FBF3), borderRadius: BorderRadius.circular(10)),
+            child: const Icon(Icons.straighten_outlined, size: 16, color: Color(0xFF6DC55A)),
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Body Measurements',
+                  style: TextStyle(fontFamily: 'Poppins', fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF1A3A22))),
+              SizedBox(height: 1),
+              Text('Weight in kg · measure in cm consistently',
+                  style: TextStyle(fontFamily: 'Poppins', fontSize: 11, color: Color(0xFF7A8C78))),
+            ]),
+          ),
+        ]),
         const SizedBox(height: 12),
         const _MeasurementGuide(),
         const SizedBox(height: 16),
         MeasurementInput(
+          key: _weightKey,
           label: 'Current weight',
           unit: 'kg',
           controller: _weight,
@@ -457,13 +509,15 @@ class _ProgressSubmissionSheetState extends State<ProgressSubmissionSheet> {
           controller: _thighs,
           previousValue: _prevValue('thighsCm'),
         ),
+          ]),
+        ),
 
         // ── Diet-specific ─────────────────────────────────
         if (_showsDiet) ...[
           const SizedBox(height: 22),
           const _SectionHeader('How are you feeling?'),
           const SizedBox(height: 12),
-          const _SectionLabel('Clothes are fitting'),
+          _SectionLabel('Clothes are fitting', key: _clothesKey),
           const SizedBox(height: 6),
           Row(
             children: _clothesFitOptions
@@ -489,7 +543,7 @@ class _ProgressSubmissionSheetState extends State<ProgressSubmissionSheet> {
             onChanged: (v) => setState(() => _sleepQuality = v),
           ),
           const SizedBox(height: 14),
-          const _SectionLabel('Overall satisfaction'),
+          _SectionLabel('Overall satisfaction', key: _satisfactionKey),
           const SizedBox(height: 8),
           RatingStarRow(
             value: _satisfaction,
@@ -602,11 +656,13 @@ class _ProgressSubmissionSheetState extends State<ProgressSubmissionSheet> {
         // ── Submit ────────────────────────────────────────
         const SizedBox(height: 24),
         V2PrimaryButton(
-          label: widget.cycle == 15
-              ? 'Submit Day 15 progress'
-              : 'Submit Day 30 progress',
+          label: !_canSubmit
+              ? '${_required.where((e) => e.value).length} of ${_required.length} answered · Next →'
+              : widget.cycle == 15
+                  ? 'Submit Day 15 progress'
+                  : 'Submit Day 30 progress',
           busy: _busy,
-          onPressed: _canSubmit ? _submit : null,
+          onPressed: _busy ? null : (_canSubmit ? _submit : _nudgeMissing),
         ),
         const SizedBox(height: 12),
         Center(
@@ -653,7 +709,7 @@ class _SectionHeader extends StatelessWidget {
 
 class _SectionLabel extends StatelessWidget {
   final String text;
-  const _SectionLabel(this.text);
+  const _SectionLabel(this.text, {super.key});
   @override
   Widget build(BuildContext context) => Text(
         text,

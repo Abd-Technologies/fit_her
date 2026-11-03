@@ -30,6 +30,7 @@ import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/api_provider/api_provider.dart';
+import '../values/constants.dart';
 import '../data/controllers/auth_controller/auth_controller.dart';
 import '../data/controllers/home_controller/home_controller.dart';
 import 'notification_services.dart';
@@ -41,6 +42,26 @@ Future init() async {
   // HomeRepo.getPaidHomeDashboard / logWater / logSleep can always find it
   // via Get.find<SharedPreferences>().
   Get.put<SharedPreferences>(sharedPreferences, permanent: true);
+  // Login renewal: save the fresh token the server sends in `x-new-token`
+  // (only while logged in, so a late reply can't log a logged-out phone back in).
+  ApiProvider.onNewToken = (token) {
+    final current = sharedPreferences.getString(Constants.accessToken) ?? '';
+    if (current.isEmpty || current == token) return;
+    sharedPreferences.setString(Constants.accessToken, token);
+    if (Get.isRegistered<AuthController>() && !Get.isPrepared<AuthController>()) {
+      Get.find<AuthController>().logInUser?.accessToken = token;
+    }
+  };
+  // Nov 2026: the server ended her login (logged out elsewhere, password
+  // changed): sign out here too and show the login screen, instead of
+  // screens that load nothing. Only for a dead token, never for guests.
+  ApiProvider.onAuthInvalid = () {
+    final current = sharedPreferences.getString(Constants.accessToken) ?? '';
+    if (current.isEmpty || !Get.isRegistered<AuthController>()) return;
+    // Only a dead login, not a request that just forgot its token.
+    if (ApiProvider.lastAuthInvalidMessage != 'Invalid accessToken!') return;
+    Get.find<AuthController>().signOutLocally();
+  };
   NotificationServices notificationServices = NotificationServices();
   Get.lazyPut(() => ApiProvider());
   Get.lazyPut(() => ChatApiProvider(sharedPreferences));

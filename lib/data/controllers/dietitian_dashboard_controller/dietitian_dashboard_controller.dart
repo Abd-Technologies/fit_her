@@ -49,6 +49,32 @@ class DietitianDashboardController extends GetxController {
 
   /// Returns the raw profile JSON so the caller can pull the private
   /// `dietitianComments` array (which the user-side model strips).
+  /// Last-7-days meal logging for one client: a list of
+  /// {date, planned, followed, alternative, skipped, logged}, oldest
+  /// first. Null on any failure (caller shows its own error state).
+  Future<List<Map<String, dynamic>>?> loadClientMealActivity(int userId,
+      {int days = 7}) async {
+    try {
+      final response = await homeRepo.adminGetClientMealActivity(
+        accessToken: _token,
+        userId: userId,
+        days: days,
+      );
+      final body = response.body;
+      if (body is! Map ||
+          body['status'] != '1' ||
+          body['data']?['days'] is! List) {
+        return null;
+      }
+      return (body['data']['days'] as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>?> loadClientProfileRaw(int userId) async {
     try {
       final response = await homeRepo.adminGetPreConsultationProfile(
@@ -218,6 +244,28 @@ class DietitianDashboardController extends GetxController {
       return ok;
     } catch (_) {
       CustomToast.failToast(msg: 'Could not resolve');
+      return false;
+    }
+  }
+
+  /// Unlocks self-booking for a client whose package was locked after a
+  /// second missed session, and gives her late change back.
+  Future<bool> resetBookingPass(int userPlanId) async {
+    try {
+      final response = await homeRepo.adminResetBookingPass(
+        accessToken: _token,
+        userPlanId: userPlanId,
+      );
+      final body = response.body;
+      final ok = body is Map && body['status']?.toString() == '1';
+      if (!ok) {
+        CustomToast.failToast(
+            msg: (body is Map ? body['message']?.toString() : null) ??
+                'Could not unlock booking');
+      }
+      return ok;
+    } catch (_) {
+      CustomToast.failToast(msg: 'Could not unlock booking');
       return false;
     }
   }

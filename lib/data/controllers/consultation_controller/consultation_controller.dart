@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../../../UI/pre_consultation/pre_consultation_form_screen.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,7 +17,12 @@ import '../../models/consultation/upcoming_appointment.dart';
 class BookConsultationOutcome {
   final bool ok;
   final int? appointmentId;
-  const BookConsultationOutcome({required this.ok, this.appointmentId});
+  // Set when a live workout class runs at the same time (server-side
+  // helper/classClash.js): {clashClass, joinAfter, nextClass}, each
+  // {time, type}. Null when nothing overlaps.
+  final Map<String, dynamic>? classClash;
+  const BookConsultationOutcome(
+      {required this.ok, this.appointmentId, this.classClash});
 }
 
 /// Glue between the consultation-flow pop-ups (Phase 2C) and the new
@@ -98,19 +104,21 @@ class ConsultationController extends GetxController {
 
   /// Saves and returns the new state. On failure shows the server's
   /// message and returns null.
-  Future<Map<String, dynamic>?> saveLifeStage(Map<String, dynamic> body) async {
+  /// [quiet]: no error toast (a background save that will retry).
+  Future<Map<String, dynamic>?> saveLifeStage(Map<String, dynamic> body, {bool quiet = false}) async {
     try {
       final r = await homeRepo.saveLifeStage(accessToken: _token, body: body);
       final parsed = r.body is String ? jsonDecode(r.body) : r.body;
       if (parsed is Map && parsed['status'] == '1' && parsed['data'] is Map) {
         return Map<String, dynamic>.from(parsed['data']);
       }
+      if (quiet) return null;
       CustomToast.failToast(
           msg: (parsed is Map ? parsed['message'] : null)?.toString() ??
               'Could not save. Please try again.');
     } catch (e) {
       debugPrint('[lifeStage] save: $e');
-      CustomToast.failToast(msg: 'Could not save. Please try again.');
+      if (!quiet) CustomToast.failToast(msg: 'Could not save. Please try again.');
     }
     return null;
   }
@@ -267,13 +275,25 @@ class ConsultationController extends GetxController {
         if (body is Map) {
           CustomToast.failToast(
               msg: body['message']?.toString() ?? 'Could not book');
+          // Health form first: open it right away instead of leaving her
+          // on the slot picker with only a message.
+          final d = body['data'];
+          if (d is Map && d['code'] == 'FORM_REQUIRED') {
+            await PreConsultationFormScreen.open(
+                planType: '${d['planType'] ?? 'diet'}', canLater: true);
+          }
         }
         return const BookConsultationOutcome(ok: false);
       }
       final data = body['data'];
       final apptJson = data is Map ? data['appointment'] : null;
       final id = apptJson is Map ? (apptJson['id'] as num?)?.toInt() : null;
-      return BookConsultationOutcome(ok: true, appointmentId: id);
+      final clash = data is Map ? data['classClash'] : null;
+      return BookConsultationOutcome(
+        ok: true,
+        appointmentId: id,
+        classClash: clash is Map ? Map<String, dynamic>.from(clash) : null,
+      );
     } catch (_) {
       CustomToast.failToast(msg: 'Could not book. Please try again.');
       return const BookConsultationOutcome(ok: false);
@@ -412,6 +432,36 @@ class ConsultationController extends GetxController {
     }
   }
 
+  /// Saves her rating for a completed consultation and refreshes the
+  /// card so the rating prompt disappears.
+  Future<bool> rateConsultation({
+    required int appointmentId,
+    required int rating,
+    String? comment,
+  }) async {
+    try {
+      final response = await homeRepo.rateConsultation(
+        accessToken: _token,
+        appointmentId: appointmentId,
+        rating: rating,
+        comment: comment,
+      );
+      final body = response.body;
+      final ok = body is Map && body['status']?.toString() == '1';
+      if (!ok) {
+        CustomToast.failToast(
+            msg: (body is Map ? body['message']?.toString() : null) ??
+                'Could not save your rating. Please try again.');
+        return false;
+      }
+      await loadUpcomingAppointment();
+      return true;
+    } catch (_) {
+      CustomToast.failToast(msg: 'Could not save your rating. Please try again.');
+      return false;
+    }
+  }
+
   // ── Escalations ──────────────────────────────────────────────────────
 
   /// User self-reports a medical concern (FAB / popup CTA). Opens a
@@ -454,23 +504,6 @@ class ConsultationController extends GetxController {
         payload: {
           if (reason != null) 'reason': reason,
         },
-      );
-      return response.body is Map && response.body['status'] == '1';
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// Reports the dietitian didn't show up at the consultation slot.
-  Future<bool> reportConsultantNoShow({
-    required int appointmentId,
-    String? reason,
-  }) async {
-    try {
-      final response = await homeRepo.reportConsultationNoShow(
-        accessToken: _token,
-        appointmentId: appointmentId,
-        reason: reason,
       );
       return response.body is Map && response.body['status'] == '1';
     } catch (_) {

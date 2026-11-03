@@ -1,9 +1,10 @@
+import 'package:fitness_zone_2/helper/progress_report_access.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:fitness_zone_2/UI/dashboard_module/bottom_bar_screen/progress_screen_v2.dart';
-import 'package:fitness_zone_2/UI/dashboard_module/measurement_screen/measurement_screen.dart';
+import 'package:fitness_zone_2/widgets/weekly_checkin/weekly_checkin_sheet.dart';
 import 'package:fitness_zone_2/data/Repos/progress_v2/progress_repository.dart';
 import 'package:fitness_zone_2/data/api_provider/api_provider.dart';
 import 'package:fitness_zone_2/data/controllers/auth_controller/auth_controller.dart';
@@ -21,6 +22,16 @@ class MyReportsScreen extends StatefulWidget {
 class _MyReportsScreenState extends State<MyReportsScreen> {
   final AuthController authController = Get.find();
   bool _isGeneratingPdf = false;
+  // Report unlocks after her first weekly check-in (server rule).
+  ProgressReportAccess? _access;
+
+  @override
+  void initState() {
+    super.initState();
+    ProgressReportAccess.load().then((a) {
+      if (mounted) setState(() => _access = a);
+    });
+  }
 
   static const _kCanvas = Color(0xFFF9FCF7);
   static const _kCardBg = Colors.white;
@@ -320,7 +331,9 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
           const SizedBox(height: 14),
           _actionButton(
             label: 'Log / Update Measurements →',
-            onTap: () => Get.to(() => MeasureMentScreen(showAppBar: true)),
+            // One weekly check-in (Oct 2026): same weekly record as the
+            // check-in; the old full form is no longer used here.
+            onTap: () => WeeklyCheckinSheet.logMeasurements(),
           ),
         ],
       ),
@@ -453,6 +466,35 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
             ),
           ),
           const SizedBox(height: 14),
+          if (_access != null && !_access!.canDownload) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _kIconWashBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _kCardBorder),
+              ),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Icon(Icons.lock_outline_rounded, size: 18, color: _kAccent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(_access!.lockedText,
+                      style: const TextStyle(fontFamily: 'Poppins', fontSize: 12, color: _kTextPrimary, height: 1.4)),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 10),
+            _actionButton(
+              label: 'Log measurements →',
+              onTap: () async {
+                final saved = await WeeklyCheckinSheet.logMeasurements();
+                if (saved) {
+                  final a = await ProgressReportAccess.load();
+                  if (mounted) setState(() => _access = a);
+                }
+              },
+            ),
+          ] else
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: _isGeneratingPdf ? null : _generateAndDownloadPdf,
@@ -533,6 +575,8 @@ class _MyReportsScreenState extends State<MyReportsScreen> {
         symptoms: symptoms,
         insights: insights,
         userFullName: userFullName,
+        // Body measurements from the weekly check-in (Oct 2026).
+        measurements: await WeeklyCheckinSheet.loadHistory(),
       );
 
       await Share.shareXFiles(

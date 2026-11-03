@@ -37,6 +37,44 @@ MediaType _mediaTypeForPath(String filePath) {
 class ApiProvider extends GetxService {
   final String baseUrl = Constants.baseUrl;
 
+  /// Login renewal (Oct 2026): when the login token is getting old the
+  /// server sends a fresh one in the `x-new-token` response header. The app
+  /// (helper/get_di.dart) and the staff portal (portal/main_portal.dart) set
+  /// this to save it. Nothing else changes for callers.
+  static void Function(String token)? onNewToken;
+
+  /// Staff portal only (the app leaves it null): called when a reply says
+  /// the login token is missing / expired / revoked.
+  static void Function()? onAuthInvalid;
+  static const authInvalidMessages = {'Invalid accessToken!', 'User not loggedIn!'};
+  /// The message of the reply that called [onAuthInvalid] (Nov 2026: the
+  /// app only signs out on "Invalid accessToken!", a dead login).
+  static String lastAuthInvalidMessage = '';
+
+  static void _checkAuthInvalid(dynamic body) {
+    final cb = onAuthInvalid;
+    if (cb == null || body is! Map) return;
+    if ('${body['status']}' == '0' && authInvalidMessages.contains('${body['message']}')) {
+      lastAuthInvalidMessage = '${body['message']}';
+      try {
+        cb();
+      } catch (e) {
+        debugPrint('====> onAuthInvalid failed: $e');
+      }
+    }
+  }
+
+  static void _checkNewToken(Map<String, String>? headers) {
+    final t = headers?['x-new-token'];
+    final cb = onNewToken;
+    if (t == null || t.isEmpty || cb == null) return;
+    try {
+      cb(t);
+    } catch (e) {
+      debugPrint('====> onNewToken failed: $e');
+    }
+  }
+
   // Every plain JSON call below (postData/putData/patchData/getData/
   // deleteData) used to await http.* with no timeout and no try/catch, so a
   // hung request never resolved and a thrown exception (no signal, DNS
@@ -71,7 +109,7 @@ class ApiProvider extends GetxService {
         headers: defaultHeaders,
         body: jsonEncode(body),
       ).timeout(timeout);
-      return handleData(url, response);
+      return await handleData(url, response);
     } on TimeoutException catch (e) {
       return _networkFailureResponse(url, e, isTimeout: true);
     } catch (e) {
@@ -87,7 +125,7 @@ class ApiProvider extends GetxService {
     };
     try {
       var response = await http.put(Uri.parse(baseUrl + url), body: jsonEncode(body), headers: defaultHeaders ?? {}).timeout(timeout);
-      return handleData(url, response);
+      return await handleData(url, response);
     } on TimeoutException catch (e) {
       return _networkFailureResponse(url, e, isTimeout: true);
     } catch (e) {
@@ -103,7 +141,7 @@ class ApiProvider extends GetxService {
     };
     try {
       var response = await http.patch(Uri.parse(baseUrl + url), body: jsonEncode(body), headers: defaultHeaders).timeout(timeout);
-      return handleData(url, response);
+      return await handleData(url, response);
     } on TimeoutException catch (e) {
       return _networkFailureResponse(url, e, isTimeout: true);
     } catch (e) {
@@ -116,7 +154,7 @@ class ApiProvider extends GetxService {
     var uri = Uri.parse(baseUrl + url).replace(queryParameters: query);
     try {
       var response = await http.get(uri, headers: headers ?? {}).timeout(timeout);
-      return handleData(url, response);
+      return await handleData(url, response);
     } on TimeoutException catch (e) {
       return _networkFailureResponse(url, e, isTimeout: true);
     } catch (e) {
@@ -129,7 +167,7 @@ class ApiProvider extends GetxService {
     var uri = Uri.parse(baseUrl + url).replace(queryParameters: query);
     try {
       var response = await http.delete(uri, headers: headers ?? {}).timeout(timeout);
-      return handleData(url, response);
+      return await handleData(url, response);
     } on TimeoutException catch (e) {
       return _networkFailureResponse(url, e, isTimeout: true);
     } catch (e) {
@@ -146,6 +184,8 @@ class ApiProvider extends GetxService {
     } catch (e) {
       _body = {};
     }
+    _checkNewToken(response.headers);
+    _checkAuthInvalid(_body);
 
     return Response(
       body: _body,
@@ -215,6 +255,7 @@ class ApiProvider extends GetxService {
       // Send request with timeout
       final streamedResponse = await request.send().timeout(timeout);
       final response = await http.Response.fromStream(streamedResponse);
+      _checkNewToken(response.headers);
 
       debugPrint('====> API Response: [${response.statusCode}] $fullUrl\n${response.body}');
 

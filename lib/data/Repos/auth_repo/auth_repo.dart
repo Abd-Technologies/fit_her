@@ -59,12 +59,15 @@ class AuthRepo extends GetxService {
 
   Future<Response> logoutUserRepo({
     required String deviceToken,
+    String? accessToken,
   }) async {
     var body = {
       "deviceToken": deviceToken,
     };
 
-    return await apiProvider.postData(Constants.logout, body: body);
+    // The server logs her out everywhere using the login token (Oct 2026).
+    return await apiProvider.postData(Constants.logout,
+        body: body, headers: {"accessToken": accessToken ?? ""});
   }
 
   Future<Response> getNotifications({
@@ -93,6 +96,18 @@ class AuthRepo extends GetxService {
         "markAll": markAll,
         if (notificationIds != null) "notificationIds": notificationIds,
       },
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Bell item swiped away: hide it on the server so it doesn't come back.
+  Future<Response> hideNotifications({
+    required String accessToken,
+    required List<int> notificationIds,
+  }) async {
+    return await apiProvider.postData(
+      Constants.hideNotifications,
+      body: {"notificationIds": notificationIds},
       headers: {"accessToken": accessToken},
     );
   }
@@ -209,9 +224,10 @@ class AuthRepo extends GetxService {
         .postData(Constants.logout, body: {"accessToken": accessToken});
   }
 
-  Future deleteUser({required String id}) async {
-    return await apiProvider
-        .postData(Constants.deleteUser, body: {"userId": id});
+  Future deleteUser({required String id, String? accessToken}) async {
+    // The server now needs the login token (own account, or an admin).
+    return await apiProvider.postData(Constants.deleteUser,
+        body: {"userId": id}, headers: {"accessToken": accessToken ?? ""});
   }
 
   // checkSessionRepo({required String accessToken, required bool isGuest}) async {

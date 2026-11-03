@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+import '../../../helper/progress_report_access.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -11,13 +13,20 @@ import '../../../data/controllers/progress_v2/progress_controller_v2.dart';
 import '../../../data/models/progress_v2/progress_models.dart';
 import '../../../helper/analytics_helper.dart';
 import '../../../services/progress_report_pdf_service.dart';
+import '../../../widgets/anim/motion.dart';
+import '../../../widgets/anim/skeleton.dart';
 import '../../../widgets/new_home/phase_theme.dart';
 import '../../../widgets/progress_v2/expandable_card.dart';
 import '../../../widgets/progress_v2/goal_ring.dart';
 import '../../../widgets/progress_v2/period_chip_selector.dart';
 import '../../../widgets/progress_v2/phase_segmented_chart.dart';
 import '../../../widgets/progress_v2/trend_bar.dart';
+import '../../../values/constants.dart';
+import '../../../widgets/weekly_checkin/weekly_checkin_sheet.dart';
+import '../../../widgets/paid_home_v2/set_target_weight_modal.dart';
+import '../../../data/controllers/paid_home_controller/paid_home_controller.dart';
 import 'progress_screen_v1.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 /// Phase D — single-scroll Progress hub (replaces the legacy 2-tab
 /// [ProgressScreenV1] for users with `useNewProgressHub == true`).
@@ -102,6 +111,9 @@ class _ProgressScreenV2State extends State<ProgressScreenV2> {
               const SizedBox(height: 14),
               _GutterPad(child: _WeightTrendCard(controller: controller)),
               const SizedBox(height: 14),
+              // Body measurements from the weekly check-in (Oct 2026).
+              const _GutterPad(child: _MeasurementsCard()),
+              const SizedBox(height: 14),
               _GutterPad(child: _GlanceCard(controller: controller)),
               const SizedBox(height: 14),
               _GutterPad(child: _HydrationCard(controller: controller)),
@@ -179,15 +191,47 @@ class _SkeletonBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: height,
-      width: width,
-      decoration: BoxDecoration(
-        color: const Color(0xFFEDF5EA),
-        borderRadius: radius ?? BorderRadius.circular(6),
+    return FhSkeletonShine(
+      child: Container(
+        height: height,
+        width: width,
+        decoration: BoxDecoration(
+          color: const Color(0xFFEDF5EA),
+          borderRadius: radius ?? BorderRadius.circular(6),
+        ),
       ),
     );
   }
+}
+
+/// Draws a 0..1 value (ring / bar fill) in from zero when it first shows
+/// (600 ms). A later change of value glides from the old one; a rebuild
+/// with the same value does nothing. Reduce-motion: the final value.
+class _GrowIn extends StatelessWidget {
+  final double value;
+  final Widget Function(BuildContext context, double v) builder;
+  const _GrowIn({required this.value, required this.builder});
+
+  @override
+  Widget build(BuildContext context) {
+    if (Motion.calm(context)) return builder(context, value);
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: value),
+      duration: Motion.slow,
+      curve: Motion.ease,
+      builder: (context, v, _) => builder(context, v),
+    );
+  }
+}
+
+/// Soft fade + slide up for a chart when it first appears.
+class _ChartEnter extends StatelessWidget {
+  final Widget child;
+  const _ChartEnter({required this.child});
+
+  @override
+  Widget build(BuildContext context) =>
+      child.fhEnter(context, index: 1, dy: 0.06);
 }
 
 class _ErrorRow extends StatelessWidget {
@@ -628,8 +672,10 @@ class _HeroCard extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        GoalRing(
-          progress: progressPct,
+        _GrowIn(
+          value: progressPct.toDouble(),
+          builder: (context, v) => GoalRing(
+          progress: v,
           color: paceColor,
           centerText:
               progressPct > 0 ? '${(progressPct * 100).round()}%' : '—',
@@ -650,12 +696,32 @@ class _HeroCard extends StatelessWidget {
             height: 1.1,
           ),
         ),
+        ),
       ],
     );
   }
 
+  /// Same "Set target weight" sheet as Home (Oct 2026). It saves the
+  /// target AND her Goal (backend helper/goalSync.js), then Progress
+  /// reloads and shows her goal ring.
+  Future<void> _openSetGoal() async {
+    if (!Get.isRegistered<PaidHomeController>()) return;
+    final paid = Get.find<PaidHomeController>();
+    if (paid.dashboard.value == null) await paid.loadDashboard();
+    final d = paid.dashboard.value;
+    final ctx = Get.context;
+    if (d == null || ctx == null) return;
+    await SetTargetWeightModal.show(context: ctx, dashboard: d);
+    if (Get.isRegistered<ProgressControllerV2>()) {
+      await Get.find<ProgressControllerV2>().refreshAll();
+    }
+  }
+
   Widget _setGoalCta() {
-    return Container(
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _openSetGoal,
+      child: Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.07),
@@ -678,6 +744,7 @@ class _HeroCard extends StatelessWidget {
           Icon(Icons.chevron_right, color: Colors.white.withOpacity(0.5)),
         ],
       ),
+    ),
     );
   }
 
@@ -902,6 +969,201 @@ class _HeroStatTile extends StatelessWidget {
   }
 }
 
+// ═══════════ Body measurements (weekly check-in) ═════════════════════════
+//
+// Oct 2026: the weekly check-in and "Log measurements" save waist, hips,
+// chest, arms and thighs to WeeklyCheckin. This card shows them: the
+// change since her first value for each one, and her last 4 entries.
+// Loads itself (GET /users/weekly-checkin/history).
+
+const _kDown = Color(0xFF2F7A25);
+const _kUp = Color(0xFFB7791F);
+
+class _MeasurementsCard extends StatefulWidget {
+  const _MeasurementsCard();
+
+  @override
+  State<_MeasurementsCard> createState() => _MeasurementsCardState();
+}
+
+class _MeasurementsCardState extends State<_MeasurementsCard> {
+  static const _measures = <(String, String)>[
+    ('waistCm', 'Waist'),
+    ('hipsCm', 'Hips'),
+    ('chestCm', 'Chest'),
+    ('armsCm', 'Arms'),
+    ('thighsCm', 'Thighs'),
+  ];
+  static const _feel = {1: '😕', 2: '😐', 3: '🙂', 4: '😍'};
+
+  List<Map<String, dynamic>>? _rows;
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final token = Get.find<AuthController>().sharedPreferences.getString(Constants.accessToken) ?? '';
+      final r = await Get.find<ApiProvider>()
+          .getData(Constants.weeklyCheckinHistory, headers: {'accessToken': token});
+      final body = r.body;
+      final rows = (body is Map && '${body['status']}' == '1' && body['data'] is Map)
+          ? body['data']['rows']
+          : null;
+      if (!mounted) return;
+      setState(() {
+        _error = rows is! List;
+        _rows = rows is List ? rows.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList() : null;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _error = true);
+    }
+  }
+
+  Future<void> _log() async {
+    final saved = await WeeklyCheckinSheet.logMeasurements();
+    if (saved) _load();
+  }
+
+  static double? _d(Object? v) => v is num ? v.toDouble() : (v is String ? double.tryParse(v) : null);
+  static String _f(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
+
+  String _date(Map<String, dynamic> r) {
+    final d = DateTime.tryParse('${r['date'] ?? r['weekDate'] ?? ''}');
+    if (d == null) return '';
+    const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final l = d.toLocal();
+    return '${l.day} ${m[l.month - 1]}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = _rows;
+    return _CardShell(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _CardTitle(
+            'Body measurements',
+            trailing: GestureDetector(
+              onTap: _log,
+              child: const Text('Log',
+                  style: TextStyle(fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w700, color: _kAccent)),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (rows == null && !_error)
+            const _SkeletonBlock(height: 90)
+          else if (_error)
+            _ErrorRow(message: "Couldn't load your measurements", onRetry: _load)
+          else
+            _body(rows!),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(List<Map<String, dynamic>> rows) {
+    // Each measure: first and latest value she logged.
+    final changes = <Widget>[];
+    for (final (key, label) in _measures) {
+      final vals = rows.map((r) => _d(r[key])).whereType<double>().toList();
+      if (vals.isEmpty) continue;
+      final first = vals.first, last = vals.last;
+      final diff = last - first;
+      final text = vals.length < 2 || diff.abs() < 0.05
+          ? (vals.length < 2 ? 'first entry' : 'same')
+          : '${diff < 0 ? '−' : '+'}${_f(diff.abs())} cm';
+      final color = vals.length < 2 || diff.abs() < 0.05 ? _kTextMuted : (diff < 0 ? _kDown : _kUp);
+      changes.add(Container(
+        width: 96,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5FDF2),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _kCardBorder),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: const TextStyle(fontFamily: 'Poppins', fontSize: 11, color: _kTextMuted)),
+          Text('${_f(last)} cm',
+              style: const TextStyle(fontFamily: 'Poppins', fontSize: 15, fontWeight: FontWeight.w700, color: _kTextPrimary)),
+          Text(text, style: TextStyle(fontFamily: 'Poppins', fontSize: 10.5, fontWeight: FontWeight.w700, color: color)),
+        ]),
+      ));
+    }
+    if (changes.isEmpty) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const _EmptyState(
+            icon: Icons.straighten_outlined,
+            message: 'Log your waist and hips to see how your body changes, not just the scale.'),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: _log,
+            child: const Text('Log measurements',
+                style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700, color: _kAccent)),
+          ),
+        ),
+      ]);
+    }
+
+    final recent = rows.reversed.take(4).toList();
+    String cell(Object? v, String unit) {
+      final d = _d(v);
+      return d == null ? '—' : '${_f(d)}$unit';
+    }
+
+    const head = TextStyle(fontFamily: 'Poppins', fontSize: 10, fontWeight: FontWeight.w700, color: _kTextMuted);
+    const val = TextStyle(fontFamily: 'Poppins', fontSize: 12.5, color: _kTextPrimary);
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const Text('Since your first entry',
+          style: TextStyle(fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w600, color: _kTextPrimary)),
+      const SizedBox(height: 8),
+      Wrap(spacing: 8, runSpacing: 8, children: changes),
+      const SizedBox(height: 14),
+      const Text('Recent entries',
+          style: TextStyle(fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w600, color: _kTextPrimary)),
+      const SizedBox(height: 6),
+      Table(
+        columnWidths: const {
+          0: FlexColumnWidth(1.2),
+          1: FlexColumnWidth(1.1),
+          2: FlexColumnWidth(1),
+          3: FlexColumnWidth(1),
+          4: FlexColumnWidth(0.6),
+        },
+        children: [
+          const TableRow(children: [
+            Padding(padding: EdgeInsets.only(bottom: 6), child: Text('DATE', style: head)),
+            Text('WEIGHT', style: head),
+            Text('WAIST', style: head),
+            Text('HIPS', style: head),
+            Text('WEEK', style: head),
+          ]),
+          for (final r in recent)
+            TableRow(
+              decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFEFF4EC)))),
+              children: [
+                Padding(padding: const EdgeInsets.symmetric(vertical: 7), child: Text(_date(r), style: val)),
+                Padding(padding: const EdgeInsets.symmetric(vertical: 7), child: Text(cell(r['weightKg'], ' kg'), style: val)),
+                Padding(padding: const EdgeInsets.symmetric(vertical: 7), child: Text(cell(r['waistCm'], ''), style: val)),
+                Padding(padding: const EdgeInsets.symmetric(vertical: 7), child: Text(cell(r['hipsCm'], ''), style: val)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 7),
+                  child: Text(_feel[(r['weekRating'] as num?)?.toInt()] ?? '—', style: val),
+                ),
+              ],
+            ),
+        ],
+      ),
+    ]);
+  }
+}
+
 // ═══════════ Weight trend ═════════════════════════════════════════════════
 
 class _WeightTrendCard extends StatelessWidget {
@@ -928,10 +1190,20 @@ class _WeightTrendCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             if (state.isLoading && state.data == null)
-              const SizedBox(
+              SizedBox(
                   height: 220,
-                  child: Center(
-                      child: CircularProgressIndicator(color: _kAccent)))
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      _SkeletonBlock(width: 120, height: 24),
+                      SizedBox(height: 12),
+                      Expanded(
+                        child: _SkeletonBlock(
+                            height: double.infinity,
+                            radius: BorderRadius.all(Radius.circular(12))),
+                      ),
+                    ],
+                  ))
             else if (state.isError && state.data == null)
               _ErrorRow(
                   message: state.errorMessage ?? 'Failed',
@@ -944,12 +1216,27 @@ class _WeightTrendCard extends StatelessWidget {
     );
   }
 
+  /// Days since her first weigh-in (all time; falls back to this
+  /// period's first point on an older server). Null = never weighed in.
+  static int? _daysSinceFirst(WeightTrend? trend) {
+    DateTime? first = DateTime.tryParse(trend?.firstWeighInDate ?? '');
+    if (first == null && trend != null && trend.history.isNotEmpty) {
+      first = DateTime.tryParse(trend.history.first.date ?? '');
+    }
+    if (first == null) return null;
+    final d = DateTime.now().difference(first.toLocal()).inDays;
+    return d < 0 ? 0 : d;
+  }
+
+  static const int _unlockDays = 15;
+
   Widget _weightBody(WeightTrend? trend) {
-    if (trend == null || trend.history.isEmpty) {
-      return const _EmptyState(
-        icon: Icons.scale_outlined,
-        message: 'Log your first weight to see trends',
-      );
+    // Oct 2026: until 15 days after her first weigh-in, a blurred EXAMPLE
+    // chart with how many days are left (a trend needs time to mean
+    // anything). After that, her real chart.
+    final since = _daysSinceFirst(trend);
+    if (since == null || since < _unlockDays || trend == null || trend.history.length < 2) {
+      return _WeightLockedPreview(daysDone: (since ?? 0).clamp(0, _unlockDays), weighedIn: since != null);
     }
 
     final history = trend.history
@@ -1046,13 +1333,15 @@ class _WeightTrendCard extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 8),
-        PhaseSegmentedChart(
-          history: history,
-          phaseSegments: segments,
-          projection: projection.isEmpty ? null : projection,
-          // Lift from default 0.10 → 0.18 so the menstrual/follicular/
-          // ovulatory/luteal tints actually read against the white card.
-          phaseBandOpacity: 0.18,
+        _ChartEnter(
+          child: PhaseSegmentedChart(
+            history: history,
+            phaseSegments: segments,
+            projection: projection.isEmpty ? null : projection,
+            // Lift from default 0.10 → 0.18 so the menstrual/follicular/
+            // ovulatory/luteal tints actually read against the white card.
+            phaseBandOpacity: 0.18,
+          ),
         ),
         const SizedBox(height: 10),
         // Phase 2 §6.A #6 — phase legend strip below the chart.
@@ -1155,8 +1444,10 @@ class _GlanceCard extends StatelessWidget {
 
     return Column(
       children: [
-        GoalRing(
-          progress: pct,
+        _GrowIn(
+          value: pct.toDouble(),
+          builder: (context, v) => GoalRing(
+          progress: v,
           color: stroke,
           centerText: centerBig,
           // Phase 2 §6.B #10 — inline 2-line center text per Q5
@@ -1166,6 +1457,7 @@ class _GlanceCard extends StatelessWidget {
           // (e.g. "16" big + "/20" small inside the Classes ring).
           labelText: centerSub,
           size: 78,
+        ),
         ),
         const SizedBox(height: 6),
         Text(ring.label,
@@ -1414,11 +1706,14 @@ class _HydrationCard extends StatelessWidget {
                       width: double.infinity,
                       color: const Color(0xFFD8EDD4),
                     ),
-                    FractionallySizedBox(
-                      widthFactor: pct,
-                      child: Container(
-                        height: 5,
-                        color: isLow ? amber : _kAccent,
+                    _GrowIn(
+                      value: pct.toDouble(),
+                      builder: (context, v) => FractionallySizedBox(
+                        widthFactor: v,
+                        child: Container(
+                          height: 5,
+                          color: isLow ? amber : _kAccent,
+                        ),
                       ),
                     ),
                   ],
@@ -1520,13 +1815,16 @@ class _SymptomsCard extends StatelessWidget {
           const SizedBox(height: 12),
           ..._staticRows.map((s) => Padding(
                 padding: const EdgeInsets.only(bottom: 14),
-                child: TrendBar(
+                child: _GrowIn(
+                  value: s.pct,
+                  builder: (context, v) => TrendBar(
                   label: s.label,
-                  pct: s.pct,
+                  pct: v,
                   color: s.barColor,
                   trailingText: '${(s.pct * 100).round()}%',
                   deltaPct: s.deltaPct,
                   deltaIsImprovement: true,
+                ),
                 ),
               )),
         ],
@@ -1629,7 +1927,9 @@ class _AiInsightsCard extends StatelessWidget {
             const SizedBox(height: 10),
             if (state.data?.honestyBanner != null) _honestyBanner(state.data!.honestyBanner!),
             if (state.isLoading && state.data == null)
-              Column(
+              FhSkeletonShine(
+                color: Colors.white.withOpacity(0.13),
+                child: Column(
                 children: List.generate(
                     3,
                     (_) => Container(
@@ -1640,6 +1940,7 @@ class _AiInsightsCard extends StatelessWidget {
                             borderRadius: BorderRadius.circular(14),
                           ),
                         )),
+                ),
               )
             else if (state.isError && state.data == null)
               _ErrorRow(
@@ -1830,17 +2131,33 @@ class _AiInsightsCard extends StatelessWidget {
 
 // ═══════════ Share Report (D8 + D9) ══════════════════════════════════════
 
+/// Loaded once per app run; refreshed when the Progress tab is rebuilt.
+final Rxn<ProgressReportAccess> _reportAccess = Rxn<ProgressReportAccess>();
+
 class _ShareReportCard extends StatelessWidget {
   final ProgressControllerV2 controller;
   const _ShareReportCard({required this.controller});
 
+  static bool _loading = false;
+
   @override
   Widget build(BuildContext context) {
+    if (_reportAccess.value == null && !_loading) {
+      _loading = true;
+      ProgressReportAccess.load().then((a) {
+        _reportAccess.value = a;
+        _loading = false;
+      });
+    }
     return _CardShell(
       child: Obx(() {
         // PDF requires *some* data in summary or symptoms — otherwise the
         // doctor would be staring at a page of em-dashes.
-        final canDownload = controller.summary.value.isReady &&
+        // + her first weekly check-in done (start + 7 days of data),
+        // otherwise the report is empty.
+        final locked = _reportAccess.value?.canDownload == false;
+        final canDownload = !locked &&
+            controller.summary.value.isReady &&
             controller.weight.value.isReady &&
             controller.symptoms.value.isReady;
         return Column(
@@ -1855,9 +2172,11 @@ class _ShareReportCard extends StatelessWidget {
               trailing: _SoonPill('Doctor share · soon'),
             ),
             const SizedBox(height: 4),
-            const Text(
-              'Generate a 2-page PDF for your records or doctor visit.',
-              style: TextStyle(fontFamily: 'Poppins', fontSize: 12, color: _kTextMuted),
+            Text(
+              locked
+                  ? _reportAccess.value!.lockedText
+                  : 'Generate a 2-page PDF for your records or doctor visit.',
+              style: const TextStyle(fontFamily: 'Poppins', fontSize: 12, color: _kTextMuted),
             ),
             const SizedBox(height: 12),
             Row(
@@ -1904,7 +2223,7 @@ class _ShareReportCard extends StatelessWidget {
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(
-          child: CircularProgressIndicator(color: _kAccent)),
+          child: FhLoader()),
     );
 
     final period = controller.period.value;
@@ -1916,6 +2235,8 @@ class _ShareReportCard extends StatelessWidget {
         symptoms: symptoms,
         insights: insights,
         userFullName: userFullName,
+        // Body measurements from the weekly check-in (Oct 2026).
+        measurements: await WeeklyCheckinSheet.loadHistory(),
       );
       if (Get.isDialogOpen ?? false) Get.back();
 
@@ -2116,4 +2437,154 @@ class _Footer extends StatelessWidget {
       ],
     );
   }
+}
+
+
+/// Weight trend before it means anything (Oct 2026): a blurred chart
+/// clearly labelled EXAMPLE (never her numbers), a lock note, how many
+/// of the 15 days are done, and "Log today's weight".
+class _WeightLockedPreview extends StatelessWidget {
+  final int daysDone;
+  final bool weighedIn;
+  const _WeightLockedPreview({required this.daysDone, required this.weighedIn});
+
+  static const _green = Color(0xFF6DC55A);
+  static const _deep = Color(0xFF3E8E36);
+  static const _line = Color(0xFFDCE8D6);
+
+  TextStyle _t(double s, {FontWeight w = FontWeight.w400, Color c = _kTextPrimary, double? h}) =>
+      TextStyle(fontFamily: 'Poppins', fontSize: s, fontWeight: w, color: c, height: h);
+
+  @override
+  Widget build(BuildContext context) {
+    final left = _WeightTrendCard._unlockDays - daysDone;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          height: 150,
+          child: Stack(children: [
+            Positioned.fill(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: ImageFiltered(
+                  imageFilter: ImageFilter.blur(sigmaX: 2, sigmaY: 2),
+                  child: Opacity(opacity: 0.45, child: CustomPaint(painter: _ExampleTrendPainter())),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 6,
+              left: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(color: const Color(0xFFF3F6F1), borderRadius: BorderRadius.circular(20)),
+                child: Text('EXAMPLE', style: _t(9.5, w: FontWeight.w700, c: _kTextMuted).copyWith(letterSpacing: 0.6)),
+              ),
+            ),
+            Center(
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 260),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: _line),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 18, offset: const Offset(0, 6))],
+                ),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text('🔒 Your trend unlocks after 15 days',
+                      textAlign: TextAlign.center, style: _t(13, w: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(
+                    weighedIn
+                        ? "Keep weighing in each week and we'll show how your weight moves with your cycle."
+                        : "Log your first weight and in 15 days we'll show how it moves with your cycle.",
+                    textAlign: TextAlign.center,
+                    style: _t(11, c: _kTextMuted, h: 1.4),
+                  ),
+                ]),
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(
+            child: Text(weighedIn ? 'Day $daysDone of 15' : '0 of 15 days',
+                style: _t(12, w: FontWeight.w600)),
+          ),
+          Text('$left to go', style: _t(11.5, c: _kTextMuted)),
+        ]),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: LinearProgressIndicator(
+            value: (daysDone / 15).clamp(0.02, 1.0),
+            minHeight: 8,
+            backgroundColor: const Color(0xFFE8F1E3),
+            valueColor: const AlwaysStoppedAnimation<Color>(_deep),
+          ),
+        ),
+        const SizedBox(height: 10),
+        const _PhaseLegend(),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 46,
+          child: ElevatedButton(
+            onPressed: () async {
+              final saved = await WeeklyCheckinSheet.logMeasurements();
+              if (saved && Get.isRegistered<ProgressControllerV2>()) {
+                await Get.find<ProgressControllerV2>().refreshAll();
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _green,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+            child: Text("Log today's weight", style: _t(14, w: FontWeight.w600, c: Colors.white)),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The EXAMPLE line behind the lock: cycle-phase bands + a gentle
+/// downward line. Never her data.
+class _ExampleTrendPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    const bands = [
+      (0.0, 0.15, Color(0xFFFBE0E0)),
+      (0.15, 0.45, Color(0xFFE3F5E8)),
+      (0.45, 0.56, Color(0xFFEFF9F1)),
+      (0.56, 1.0, Color(0xFFFDF2DE)),
+    ];
+    for (final (a, b, c) in bands) {
+      canvas.drawRect(Rect.fromLTRB(a * w, 0, b * w, h), Paint()..color = c);
+    }
+    const pts = [0.27, 0.32, 0.31, 0.39, 0.41, 0.47, 0.49, 0.55, 0.57, 0.63, 0.65];
+    final path = Path();
+    for (var i = 0; i < pts.length; i++) {
+      final x = 10 + (w - 20) * i / (pts.length - 1);
+      final y = h * pts[i];
+      i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = const Color(0xFF3E8E36)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

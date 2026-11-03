@@ -2,7 +2,7 @@ import 'package:fitness_zone_2/widgets/app_bar_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
-import '../values/constants.dart';
+import '../helper/private_file_url.dart';
 
 class FullImageWidget extends StatelessWidget {
   const FullImageWidget({super.key, required this.image});
@@ -16,7 +16,8 @@ class FullImageWidget extends StatelessWidget {
         Get.back();
       }),
       body: Center(
-        child: Image.network("${Constants.baseUrl}/${image}"),
+        // Only used for payment slips -> protected /files route.
+        child: Image.network(privateFileUrl(image)),
       ),
     );
   }

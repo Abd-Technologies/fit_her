@@ -1,13 +1,21 @@
+import '../UI/admin_module/payment_checks/payment_checks_screen.dart';
+import '../UI/admin_module/payment_accounts/payment_accounts_screen.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/add_package/add_package.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/get_all_new_user_images/get_new_user_images.dart';
 import 'package:fitness_zone_2/UI/admin_module/admin_v2/admin_escalations_screen.dart';
 import 'package:fitness_zone_2/UI/admin_module/admin_v2/admin_metrics_screen.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/posts_module/admin_approve_posts.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/posts_module/feed_screen.dart';
-import 'package:fitness_zone_2/UI/diet_screen/dietry_module/dietaryCheckScreen.dart';
+// import 'package:fitness_zone_2/UI/diet_screen/dietry_module/dietaryCheckScreen.dart'; // legacy PDF diet plan — disabled
 import 'package:fitness_zone_2/UI/plans_module/add_country.dart';
 import 'package:fitness_zone_2/UI/plans_module/add_time_durations.dart';
 import 'package:fitness_zone_2/UI/plans_module/add_trainer_slots.dart';
+import 'package:fitness_zone_2/UI/trainer_class/trainer_rooms_screen.dart';
+import 'package:fitness_zone_2/UI/admin_module/app_version/app_version_screen.dart';
+import 'package:fitness_zone_2/UI/admin_module/trial_days/trial_days_screen.dart';
+import 'admin_payment_alerts.dart';
+import 'package:fitness_zone_2/UI/class_feedback/class_feedback_screens.dart';
+import 'package:fitness_zone_2/UI/admin_module/growth/growth_dashboard_screen.dart';
 import 'package:fitness_zone_2/UI/plans_module/assign_workout_diet_plan.dart';
 import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.dart';
 import 'package:fitness_zone_2/data/controllers/plan_controller/plan_controller.dart';
@@ -30,6 +38,8 @@ import '../values/my_imgs.dart';
 import 'package:get/get.dart';
 
 import 'all_plans_screen.dart';
+import 'package:fitness_zone_2/widgets/anim/motion.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 
 class AdminHomeScreen extends StatelessWidget {
   AdminHomeScreen({Key? key}) : super(key: key);
@@ -41,11 +51,13 @@ class AdminHomeScreen extends StatelessWidget {
     return SingleChildScrollView(
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: 20.w),
-        child: Column(
+        child: _softIn(context, Column(
           children: [
             SizedBox(
               height: 50.h,
             ),
+            // Oct 2026: "N payments to confirm" / "N slips to approve".
+            const AdminPaymentAlerts(),
             Stack(
               alignment: Alignment.bottomLeft,
               children: [
@@ -210,6 +222,55 @@ class AdminHomeScreen extends StatelessWidget {
               height: 20.h,
             ),
             GestureDetector(
+              onTap: () => Get.to(() => const TrainerRoomsScreen()),
+              child: containerWidget(const Color(0xffE6F6E0), "Class Zoom Room", MyImgs.annoucements),
+            ),
+            SizedBox(
+              height: 20.h,
+            ),
+            GestureDetector(
+              onTap: () => Get.to(() => const GrowthDashboardScreen()),
+              child: containerWidget(const Color(0xffE6F6E0), "Growth", MyImgs.annoucements),
+            ),
+            SizedBox(
+              height: 20.h,
+            ),
+            GestureDetector(
+              onTap: () => Get.to(() => const PaymentChecksScreen()),
+              child: containerWidget(const Color(0xffFDECEC), "Confirm payments", MyImgs.annoucements),
+            ),
+            SizedBox(
+              height: 20.h,
+            ),
+            GestureDetector(
+              onTap: () => Get.to(() => const PaymentAccountsScreen()),
+              child: containerWidget(const Color(0xffE8F0F8), "Payment accounts", MyImgs.annoucements),
+            ),
+            SizedBox(
+              height: 20.h,
+            ),
+            GestureDetector(
+              onTap: () => Get.to(() => const AdminClassFeedbackScreen()),
+              child: containerWidget(const Color(0xffFFF0E6), "Class Feedback", MyImgs.annoucements),
+            ),
+            SizedBox(
+              height: 20.h,
+            ),
+            GestureDetector(
+              onTap: () => Get.to(() => const AppVersionScreen()),
+              child: containerWidget(const Color(0xffFFF4E0), "App Version", MyImgs.annoucements),
+            ),
+            SizedBox(
+              height: 20.h,
+            ),
+            GestureDetector(
+              onTap: () => Get.to(() => const TrialDaysScreen()),
+              child: containerWidget(const Color(0xffEAF7E4), "Free Trial Length", MyImgs.annoucements),
+            ),
+            SizedBox(
+              height: 20.h,
+            ),
+            GestureDetector(
               onTap: () {
                 Get.find<PlanController>().getAllCountriesFunc();
 
@@ -221,15 +282,16 @@ class AdminHomeScreen extends StatelessWidget {
               height: 20.h,
             ),
 
-            GestureDetector(
-              onTap: () {
-                Get.to(() => DietaryCheckScreen());
-              },
-              child: containerWidget(const Color(0xffE6EEFF), "Dietary Check", MyImgs.annoucements),
-            ),
-            SizedBox(
-              height: 20.h,
-            ),
+            // Legacy PDF diet plan status list — disabled (backend route removed).
+            // GestureDetector(
+            //   onTap: () {
+            //     Get.to(() => DietaryCheckScreen());
+            //   },
+            //   child: containerWidget(const Color(0xffE6EEFF), "Dietary Check", MyImgs.annoucements),
+            // ),
+            // SizedBox(
+            //   height: 20.h,
+            // ),
 
             GestureDetector(
               onTap: () {
@@ -270,8 +332,12 @@ class AdminHomeScreen extends StatelessWidget {
               height: 20.h,
             ),
           ],
-        ),
+        )),
       ),
     );
   }
+
+  /// One soft fade-in of the admin tiles (staff screen: small touch only).
+  Widget _softIn(BuildContext context, Widget child) =>
+      Motion.calm(context) ? child : child.animate().fadeIn(duration: Motion.normal, curve: Motion.ease);
 }

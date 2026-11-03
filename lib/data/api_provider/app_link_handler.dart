@@ -69,6 +69,15 @@ class AppLinkHandler {
       final details = await PlayInstallReferrer.installReferrer;
       final raw = details.installReferrer ?? '';
       if (raw.isEmpty) return;
+      // Growth analytics: where she came from (saved, sent at sign-up).
+      try {
+        final q = Uri.splitQueryString(raw);
+        final src = q['utm_source'] ?? (q['trial_token'] != null ? 'rep_link' : null);
+        if (src != null && src.isNotEmpty && src != 'google-play') {
+          prefs.setString('signup_source', src);
+        }
+        if ((q['utm_campaign'] ?? '').isNotEmpty) prefs.setString('signup_campaign', q['utm_campaign']!);
+      } catch (_) {}
       final token = Uri.splitQueryString(raw)['trial_token'] ?? '';
       if (token.isEmpty) return;
       if ((prefs.getString(Constants.trialToken) ?? '').isNotEmpty) return;
@@ -85,6 +94,11 @@ class AppLinkHandler {
   Future<void> _handleIncomingUri(BuildContext context, Uri uri) async {
     final token = uri.queryParameters["token"];
     if (uri.toString().contains("trial") && token != null && token.isNotEmpty) {
+      // Growth analytics: she came from a sales rep's trial link.
+      try {
+        final p = Get.find<AuthController>().sharedPreferences;
+        if ((p.getString('signup_source') ?? '').isEmpty) p.setString('signup_source', 'rep_link');
+      } catch (_) {}
       final homeController = Get.find<HomeController>();
       final authController = Get.find<AuthController>();
 

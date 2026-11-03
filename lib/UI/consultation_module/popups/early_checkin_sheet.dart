@@ -2,14 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../../data/controllers/consultation_controller/consultation_controller.dart';
+import '../../../widgets/toasts.dart';
 import '../../../widgets/v2/v2_bottom_sheet.dart';
 
-/// `POPUP_EARLY_CHECKIN` — fires Day 3-4 after a plan is delivered.
-/// Three quick-tap options, no primary CTA — taps directly close + route.
+/// `POPUP_EARLY_CHECKIN` — fires on day 4 (open until day 6) after EVERY
+/// diet plan the dietitian shares with her. First plan and later plans
+/// get slightly different titles.
+/// One question, three one-tap answers. A tap saves the answer and
+/// closes the sheet; no follow-up questions (Oct 2026, kept simple).
 class EarlyCheckinSheet extends StatelessWidget {
   static const String variable = 'POPUP_EARLY_CHECKIN';
 
-  /// Caller hooks for the two follow-up routes.
+  /// Kept for the orchestrator's existing call; not used any more.
   final VoidCallback onOpenChat;
   final VoidCallback onOpenFaq;
 
@@ -22,9 +26,12 @@ class EarlyCheckinSheet extends StatelessWidget {
   static Future<void> show({
     required VoidCallback onOpenChat,
     required VoidCallback onOpenFaq,
+    bool firstPlan = true,
   }) {
     return V2BottomSheet.show(
-      title: "How's your plan going?",
+      title: firstPlan
+          ? "How's your diet plan going?"
+          : "How's your new diet plan going?",
       child: EarlyCheckinSheet(onOpenChat: onOpenChat, onOpenFaq: onOpenFaq),
     );
   }
@@ -32,11 +39,18 @@ class EarlyCheckinSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ctrl = Get.find<ConsultationController>();
+
+    void answer(String response) {
+      ctrl.completePopup(variable, metadata: {'response': response});
+      Get.back<dynamic>();
+      CustomToast.successToast(msg: 'Thanks for telling us');
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text(
-          "Tell us in one tap — we use this to know who needs help right now.",
+          'Tell us in one tap.',
           style: TextStyle(
             fontFamily: 'Poppins',
             fontSize: 13,
@@ -46,35 +60,24 @@ class EarlyCheckinSheet extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         _CheckinOption(
-          icon: Icons.thumb_up_alt_rounded,
-          label: 'Going well',
+          emoji: '😊',
+          label: 'Good',
           color: const Color(0xFF6DC55A),
-          onTap: () {
-            ctrl.completePopup(variable, metadata: {'response': 'going_well'});
-            Get.back<dynamic>();
-          },
+          onTap: () => answer('good'),
         ),
         const SizedBox(height: 10),
         _CheckinOption(
-          icon: Icons.chat_bubble_rounded,
-          label: 'Having issues',
+          emoji: '😐',
+          label: 'Some issues',
           color: const Color(0xFFFAC775),
-          onTap: () {
-            ctrl.completePopup(variable, metadata: {'response': 'having_issues'});
-            Get.back<dynamic>();
-            onOpenChat();
-          },
+          onTap: () => answer('some_issues'),
         ),
         const SizedBox(height: 10),
         _CheckinOption(
-          icon: Icons.help_outline_rounded,
+          emoji: '😟',
           label: 'Need help',
           color: const Color(0xFFFF8A8A),
-          onTap: () {
-            ctrl.completePopup(variable, metadata: {'response': 'need_help'});
-            Get.back<dynamic>();
-            onOpenFaq();
-          },
+          onTap: () => answer('need_help'),
         ),
       ],
     );
@@ -82,13 +85,13 @@ class EarlyCheckinSheet extends StatelessWidget {
 }
 
 class _CheckinOption extends StatelessWidget {
-  final IconData icon;
+  final String emoji;
   final String label;
   final Color color;
   final VoidCallback onTap;
 
   const _CheckinOption({
-    required this.icon,
+    required this.emoji,
     required this.label,
     required this.color,
     required this.onTap,
@@ -110,7 +113,7 @@ class _CheckinOption extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(icon, color: color, size: 22),
+              Text(emoji, style: const TextStyle(fontSize: 22)),
               const SizedBox(width: 14),
               Expanded(
                 child: Text(
@@ -123,7 +126,6 @@ class _CheckinOption extends StatelessWidget {
                   ),
                 ),
               ),
-              Icon(Icons.chevron_right_rounded, color: color, size: 22),
             ],
           ),
         ),

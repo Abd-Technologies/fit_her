@@ -1,3 +1,4 @@
+import '../../../helper/class_join_memory.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -102,12 +103,18 @@ class MotivationController extends GetxController implements GetxService {
 
   DateTime? _classJoinedAt;
 
-  Future<void> classPresenceJoin({
+  /// Records that she joined. Returns false only when the server refuses
+  /// the join (a free-trial user past the join window, code TRIAL_LATE).
+  Future<bool> classPresenceJoin({
     required String slotId,
+    /// true: only an explicit OK from the server counts (used when the app
+    /// thinks she's late, so the server decides, e.g. an on-time rejoin).
+    bool strict = false,
     String? meetingNumber,
     String? className,
     String? trainerName,
     String? scheduledStartTime,
+    bool track = true,
   }) async {
     _classJoinedAt = DateTime.now();
 
@@ -127,23 +134,27 @@ class MotivationController extends GetxController implements GetxService {
       } catch (_) {}
     }
 
-    // Fire Mixpanel event for class join
-    await AnalyticsHelper.trackWorkoutClassJoined(
-      slotId: slotId,
-      className: className,
-      trainerName: trainerName,
-      userTier: userTier,
-      scheduledStartTime: scheduledStartTime,
-      delayFromScheduleMinutes: delayMinutes,
-      source: meetingNumber != null ? 'zoom_native' : 'https_url',
-    );
+    // Mixpanel "workout_class_joined" — sent once, AFTER the server
+    // accepted the join (not for the trial pre-check, track:false).
+    Future<void> trackJoined() async {
+      if (!track) return;
+      await AnalyticsHelper.trackWorkoutClassJoined(
+        slotId: slotId,
+        className: className,
+        trainerName: trainerName,
+        userTier: userTier,
+        scheduledStartTime: scheduledStartTime,
+        delayFromScheduleMinutes: delayMinutes,
+        source: meetingNumber != null ? 'zoom_native' : 'https_url',
+      );
+    }
 
     final accessToken =
         sharedPreferences.getString(Constants.accessToken) ?? "";
-    if (accessToken.isEmpty) return;
+    if (accessToken.isEmpty) return !strict;
 
     try {
-      await homeRepo.classPresenceJoin(
+      final res = await homeRepo.classPresenceJoin(
         accessToken: accessToken,
         map: {
           "slotId": slotId,
@@ -152,9 +163,24 @@ class MotivationController extends GetxController implements GetxService {
           "source": "zoom_native",
         },
       );
+      final body = res.body;
+      if (body is Map &&
+          '${body['status']}' == '0' &&
+          body['data'] is Map &&
+          (body['data'] as Map)['code'] == 'TRIAL_LATE') {
+        return false;
+      }
+      if (body is Map && '${body['status']}' == '1') {
+        ClassJoinMemory.markJoined(slotId);
+        trackJoined();
+      }
+      if (strict) return body is Map && '${body['status']}' == '1';
     } catch (_) {
-      // Presence reporting is best-effort and should never block class entry.
+      // Presence reporting is best-effort; a network error never blocks
+      // (unless strict).
+      return !strict;
     }
+    return true;
   }
 
   Future<void> classPresenceLeave({

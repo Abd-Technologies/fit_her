@@ -1,5 +1,5 @@
 import 'package:fitness_zone_2/UI/auth_module/choose_any_one/choose_any_one.dart';
-import 'package:fitness_zone_2/UI/auth_module/cycle_settings_screen.dart';
+import 'package:fitness_zone_2/UI/auth_module/log_period_screen.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/profile_screen/notification_settings_screen.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/profile_screen/add_plan_diet.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/profile_screen/update_profile.dart';
@@ -78,7 +78,7 @@ class ProfileScreen extends StatelessWidget {
                     ? const SizedBox.shrink()
                     : GestureDetector(
                         onTap: () {
-                          Get.to(() => const CycleSettingsScreen());
+                          Get.to(() => const LogPeriodScreen());
                         },
                         child: Column(
                           children: [

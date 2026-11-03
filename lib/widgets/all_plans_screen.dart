@@ -11,6 +11,7 @@ import '../data/models/get_user_plan/get_user_plan.dart';
 import '../values/constants.dart';
 import '../values/my_colors.dart';
 import '../values/my_imgs.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class AllPlansScreen extends StatelessWidget {
   AllPlansScreen({super.key, this.isHaveAppBar = false});
@@ -145,9 +146,7 @@ class AllPlansScreen extends StatelessWidget {
                     );
                   } else {
                     return const Center(
-                        child: CircularProgressIndicator(
-                      color: MyColors.buttonColor,
-                    ));
+                        child: FhLoader());
                   }
                 },
                 separatorBuilder: (BuildContext context, int index) {
