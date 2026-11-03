@@ -22,6 +22,7 @@ import 'Imporatant_Screen.dart';
 import 'Success_Stories.dart';
 import 'about_us_screen.dart';
 import '../../../widgets/logout_sheet.dart';
+import '../../../helper/legal_links.dart';
 
 class ProfileScreen extends StatelessWidget {
   ProfileScreen({Key? key, this.fromWelcomeScreen = false}) : super(key: key);
@@ -59,6 +60,14 @@ class ProfileScreen extends StatelessWidget {
                 rowWidget(MyImgs.aboutUs, "About Us", () {
                   Get.to(() => AboutUsScreen());
                 }),
+                SizedBox(
+                  height: 10.h,
+                ),
+                rowWidget(MyImgs.aboutUs, "Terms & Conditions", LegalLinks.openTerms),
+                SizedBox(
+                  height: 10.h,
+                ),
+                rowWidget(MyImgs.aboutUs, "Privacy Policy", LegalLinks.openPrivacy),
                 SizedBox(
                   height: 10.h,
                 ),
