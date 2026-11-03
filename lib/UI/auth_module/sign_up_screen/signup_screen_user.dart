@@ -1,6 +1,7 @@
 import 'package:fitness_zone_2/UI/auth_module/login/login.dart';
 import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import '../../../data/controllers/auth_controller/auth_controller.dart';
 import '../../../values/my_imgs.dart';
@@ -10,6 +11,7 @@ import 'package:intl_phone_field/intl_phone_field.dart';
 
 import '../../../widgets/toasts.dart';
 import '../../../helper/analytics_helper.dart';
+import '../../../helper/legal_links.dart';
 import '../walt_through/animated_cycle_wheel.dart';
 import 'dart:math' as math;
 
@@ -489,11 +491,15 @@ class _SignUpNewUserState extends State<SignUpNewUser> {
                                         text:
                                             'By continuing, I agree to '),
                                     TextSpan(
-                                      text: 'Terms of Services',
+                                      text: 'Terms of Service',
                                       style: TextStyle(
                                         color: _green,
                                         fontWeight: FontWeight.w500,
+                                        decoration: TextDecoration.underline,
+                                        decorationColor: _green,
                                       ),
+                                      recognizer: TapGestureRecognizer()
+                                        ..onTap = LegalLinks.openTerms,
                                     ),
                                     const TextSpan(
                                         text: ' and acknowledge the '),
@@ -502,7 +508,11 @@ class _SignUpNewUserState extends State<SignUpNewUser> {
                                       style: TextStyle(
                                         color: _green,
                                         fontWeight: FontWeight.w500,
+                                        decoration: TextDecoration.underline,
+                                        decorationColor: _green,
                                       ),
+                                      recognizer: TapGestureRecognizer()
+                                        ..onTap = LegalLinks.openPrivacy,
                                     ),
                                     const TextSpan(text: '.'),
                                   ],

@@ -24,6 +24,7 @@ import 'package:fitness_zone_2/values/constants.dart';
 import 'package:fitness_zone_2/widgets/new_home/phase_theme.dart';
 import '../../support/support_api.dart';
 import '../../../widgets/logout_sheet.dart';
+import '../../../helper/legal_links.dart';
 
 /// Profile screen — rebuilt to match `new screens/Profile_Final_3Screens.html`
 /// V1 design (mint hero with avatar + day/phase chip, overlapping stats
@@ -1477,7 +1478,7 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
     );
   }
 
-  // ─── Menu list (4 rows: Personal details, Notifications, Reports, Help) ─
+  // ─── Menu list (Personal details, Notifications, Reports, Issue, Help, Terms, Privacy) ─
   Widget _menuCard(BuildContext context, TextTheme textTheme) {
     final rows = <_MenuItem>[
       _MenuItem(
@@ -1510,6 +1511,16 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
         // Same admin WhatsApp number used by result_screen.dart's contact
         // CTA — keep the number in one place until we add a config var.
         onTap: () => _showHelpSheet(context, textTheme),
+      ),
+      _MenuItem(
+        icon: Icons.gavel_outlined,
+        label: 'Terms & Conditions',
+        onTap: LegalLinks.openTerms,
+      ),
+      _MenuItem(
+        icon: Icons.privacy_tip_outlined,
+        label: 'Privacy Policy',
+        onTap: LegalLinks.openPrivacy,
       ),
     ];
 
