@@ -9,7 +9,32 @@ import '../../../widgets/toasts.dart';
 
 class MeasureMentScreen extends StatefulWidget {
   final bool showAppBar;
-  const MeasureMentScreen({Key? key, this.showAppBar = false}) : super(key: key);
+
+  /// Shown as a pop-up sheet (weekly check-in reminder, home prompt).
+  final bool asSheet;
+  const MeasureMentScreen({Key? key, this.showAppBar = false, this.asSheet = false}) : super(key: key);
+
+  /// The weekly check-in as a pop-up, same form as Log measurements.
+  /// Returns true when she saved it.
+  static Future<bool> showSheet() async {
+    final r = await Get.bottomSheet<bool>(
+      const MeasureMentScreen(asSheet: true),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+    );
+    return r == true;
+  }
+
+  /// Done in the last 6 days (on this phone)?
+  static bool doneThisWeek() {
+    try {
+      final at = Get.find<AuthController>().sharedPreferences.getInt('weekly_report_at');
+      if (at == null) return false;
+      return DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(at)).inDays < 6;
+    } catch (_) {
+      return false;
+    }
+  }
 
   @override
   State<MeasureMentScreen> createState() => _MeasureMentScreenState();
@@ -37,6 +62,16 @@ class _MeasureMentScreenState extends State<MeasureMentScreen> {
       homeController.currentDate.text =
           DateFormat("dd/MM/yyyy").format(DateTime.now());
     }
+    // First day date + weight: remembered from her earlier check-ins.
+    try {
+      final prefs = Get.find<AuthController>().sharedPreferences;
+      if (homeController.firstDay.text.isEmpty) {
+        homeController.firstDay.text = prefs.getString('weekly_first_day') ?? '';
+      }
+      if (homeController.firstWeight.text.isEmpty) {
+        homeController.firstWeight.text = prefs.getString('weekly_first_weight') ?? '';
+      }
+    } catch (_) {}
     // Pre-fill current weight from profile if empty
     if (homeController.currentWeight.text.isEmpty &&
         Get.isRegistered<AuthController>()) {
@@ -49,15 +84,50 @@ class _MeasureMentScreenState extends State<MeasureMentScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.asSheet) {
+      return Container(
+        height: MediaQuery.of(context).size.height * 0.92,
+        decoration: const BoxDecoration(
+          color: _kCanvas,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 12, 0),
+            child: Row(children: [
+              const Spacer(),
+              Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(color: const Color(0xFFDADFD5), borderRadius: BorderRadius.circular(4)),
+              ),
+              const Spacer(),
+            ]),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              onPressed: () => Get.back(result: false),
+              icon: const Icon(Icons.close_rounded, color: _kSage),
+            ),
+          ),
+          Expanded(child: _content(bottomPad: MediaQuery.of(context).viewInsets.bottom + 24)),
+        ]),
+      );
+    }
     return Scaffold(
       backgroundColor: _kCanvas,
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 10, 20, 40),
+      body: SafeArea(child: _content()),
+    );
+  }
+
+  Widget _content({double bottomPad = 40}) {
+    return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(20, widget.asSheet ? 0 : 10, 20, bottomPad),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (widget.showAppBar) _topBar(),
+              if (widget.showAppBar && !widget.asSheet) _topBar(),
               _headerIntro(),
               const SizedBox(height: 18),
 
@@ -82,8 +152,6 @@ class _MeasureMentScreenState extends State<MeasureMentScreen> {
               const SizedBox(height: 24),
             ],
           ),
-        ),
-      ),
     );
   }
 
@@ -509,20 +577,18 @@ class _MeasureMentScreenState extends State<MeasureMentScreen> {
         homeController.arms.text.trim().isEmpty ||
         homeController.chest.text.trim().isEmpty ||
         homeController.abdonmen.text.trim().isEmpty ||
-        homeController.thighs.text.trim().isEmpty ||
-        homeController.tellUsMore.text.trim().isEmpty) {
+        homeController.thighs.text.trim().isEmpty) {
+      // (Weekly feedback is optional.)
       CustomToast.failToast(msg: "Please fill in all measurement fields");
       return;
     }
 
     setState(() => _isSubmitting = true);
     try {
-      await homeController.updateMyWeeklyReport();
-      if (mounted && widget.showAppBar) {
-        // If opened as standalone screen, return back after submit
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted) Get.back();
-        });
+      final ok = await homeController.updateMyWeeklyReport();
+      if (ok && mounted && (widget.showAppBar || widget.asSheet)) {
+        // Opened as its own screen / pop-up: close after saving.
+        Get.back(result: true);
       }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);

@@ -14,12 +14,15 @@ class RenewPlanSheet extends StatelessWidget {
   /// Caller hooks the navigation to the existing plans-purchase screen.
   final VoidCallback onViewPlans;
 
-  const RenewPlanSheet({Key? key, required this.onViewPlans}) : super(key: key);
+  /// Her plan has already ended (not just ending soon).
+  final bool ended;
 
-  static Future<void> show({required VoidCallback onViewPlans}) {
+  const RenewPlanSheet({Key? key, required this.onViewPlans, this.ended = false}) : super(key: key);
+
+  static Future<void> show({required VoidCallback onViewPlans, bool ended = false}) {
     return V2BottomSheet.show(
-      title: "Ready for next month?",
-      child: RenewPlanSheet(onViewPlans: onViewPlans),
+      title: ended ? "Your plan has ended" : "Ready for next month?",
+      child: RenewPlanSheet(onViewPlans: onViewPlans, ended: ended),
     );
   }
 
@@ -29,8 +32,10 @@ class RenewPlanSheet extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          "You finished your 30-day cycle. Renew now to keep your dietitian, your progress, and your routine.",
+        Text(
+          ended
+              ? "Renew to keep your dietitian, live classes and your routine. Your meal plan stays here for you to look back on."
+              : "You finished your 30-day cycle. Renew now to keep your dietitian, your progress, and your routine.",
           style: TextStyle(
             fontFamily: 'Poppins',
             fontSize: 14,

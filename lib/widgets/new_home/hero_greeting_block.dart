@@ -79,7 +79,7 @@ class HeroGreetingBlock extends StatelessWidget {
               fontFamily: 'Poppins',
               fontSize: 11,
               fontWeight: FontWeight.w500,
-              color: Colors.white.withOpacity(0.75),
+              color: Colors.white.withOpacity(0.92),
             ),
           ),
           const SizedBox(height: 14),
@@ -106,7 +106,7 @@ class HeroGreetingBlock extends StatelessWidget {
                       fontFamily: 'Poppins',
                       fontSize: phaseSize,
                       fontWeight: FontWeight.w500,
-                      color: Colors.white.withOpacity(0.55),
+                      color: Colors.white.withOpacity(0.96),
                       letterSpacing: -0.5,
                       height: 1.0,
                     ),
@@ -136,7 +136,7 @@ class HeroGreetingBlock extends StatelessWidget {
                 fontFamily: 'Poppins',
                 fontSize: phaseSize,
                 fontWeight: FontWeight.w500,
-                color: Colors.white.withOpacity(0.55),
+                color: Colors.white.withOpacity(0.92),
                 letterSpacing: -0.5,
                 height: 1.0,
               ),
@@ -186,14 +186,12 @@ class HeroGreetingBlock extends StatelessWidget {
                 runSpacing: 4,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  _chip(dayText, 12, FontWeight.w700, const Color(0xFFA8F0C0).withOpacity(0.55)),
+                  _chip(dayText, 12, FontWeight.w700, const Color(0xFFA8F0C0)),
                   if (!started) ...[
                     _sep(),
-                    _chip('Preview mode', 11, null, Colors.white.withOpacity(0.65)),
+                    _chip('Preview mode', 11, FontWeight.w500, Colors.white.withOpacity(0.85)),
                     _sep(),
-                    _chip('—', 11, FontWeight.w600, Colors.white.withOpacity(0.2)),
-                    _sep(),
-                    _chip(_goalLabel, 12, FontWeight.w700, const Color(0xFF6DC55A).withOpacity(0.7)),
+                    _chip(_goalLabel, 12, FontWeight.w700, const Color(0xFF8FE07D)),
                   ],
                 ],
               );
@@ -217,7 +215,7 @@ class HeroGreetingBlock extends StatelessWidget {
         style: TextStyle(
           fontFamily: 'Poppins',
           fontSize: 11,
-          color: Colors.white.withOpacity(0.18),
+          color: Colors.white.withOpacity(0.45),
         ),
       );
 

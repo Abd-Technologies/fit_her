@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 13.0.0+22
+version: 12.0.0+22
 
 environment:
   sdk: '>=3.0.5 <4.0.0'
@@ -62,6 +62,9 @@ dependencies:
   device_info_plus: ^10.1.2
   carousel_slider: ^5.0.0
   url_launcher: ^6.2.6
+  # App update popup (see helper/app_update_checker.dart)
+  package_info_plus: ^9.0.1
+  in_app_update: ^4.2.3
   flutter_local_notifications: ^18.0.1
   mixpanel_flutter: ^2.3.0
   custom_rating_bar: ^3.0.0
@@ -70,6 +73,7 @@ dependencies:
   wakelock_plus: ^1.1.4
   webview_flutter: ^4.5.0
   flutter_dotenv: ^5.1.0
+  flutter_animate: ^4.5.2
   flutter_svg: ^2.0.10+1
   percent_indicator: ^4.2.3
   syncfusion_flutter_charts: ^27.1.51
@@ -83,7 +87,7 @@ dependencies:
   socket_io_client: ^3.1.2
   flutter_inappwebview: ^6.1.5  #  uni_links: ^0.5.1
   youtube_player_flutter: ^9.1.2
-  youtube_player_iframe: ^4.0.4
+  youtube_player_iframe: ^5.2.1
   country_picker: ^2.0.26
   flutter_timezone: ^3.0.1
   # Phase F.3 — IANA zone database. flutter_timezone above only returns
@@ -154,6 +158,13 @@ flutter:
            weight: 500
          - asset: assets/fonts/Poppins-SemiBold.ttf
            weight: 600
+         # Oct 2026: Bold and ExtraBold added. ~930 texts ask for w700/w800
+         # (headlines, prices, big numbers) and showed as SemiBold without
+         # them. Same static files Google Fonts serves (OFL licence).
+         - asset: assets/fonts/Poppins-Bold.ttf
+           weight: 700
+         - asset: assets/fonts/Poppins-ExtraBold.ttf
+           weight: 800
      # Bundled locally instead of fetched at runtime by the google_fonts
      # package. Runtime fetching caused a visible font flash (FOUT) on the
      # welcome / login / diet screens: the text painted in the system

@@ -48,7 +48,9 @@ SlotInput? buildSlotInput(Slot slot, DateTime anchorDate) {
 /// to "expired" when home data hasn't loaded — safe-fail (locks the
 /// button) rather than letting an empty payload look healthy.
 UserAccessInput buildUserAccess(HomeController homeController) {
-  final isFrozen = homeController.userHomeData?.userData.freeze.value == true;
+  // Old admin freeze OR her own pause (freeze v2): no classes (Oct 2026).
+  final isFrozen = homeController.userHomeData?.userData.freeze.value == true ||
+      homeController.planFrozen.value;
   final plans = homeController.userHomeData?.userAllPlans;
   final planRemainingDays =
       (plans != null && plans.isNotEmpty) ? plans.first.remainingDays : 0;

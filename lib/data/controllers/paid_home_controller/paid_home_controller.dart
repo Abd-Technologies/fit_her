@@ -1,18 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:get/get.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../utils/app_clock.dart';
+import '../../../utils/slot_input_builder.dart' show parseSlotWallClock;
+import '../../../widgets/paid_home_v2/paid_hero.dart' show effectiveLiveClass;
 import '../../../values/constants.dart';
 import '../../Repos/checkin_repo/checkin_repository.dart';
 import '../../Repos/home_repo/home_repo.dart';
 import '../../models/home_dashboard/home_dashboard_model.dart';
 import '../cycle_theme_controller/cycle_theme_controller.dart';
+import '../home_controller/home_controller.dart';
 
 /// Owns the reactive state for PaidHomeScreenV2. One call to loadDashboard()
 /// populates `dashboard`. UI reads via Obx / GetBuilder / dashboard.value.
 /// Errors are surfaced through `errorMessage` — never thrown to the UI.
-class PaidHomeController extends GetxController {
+class PaidHomeController extends GetxController with WidgetsBindingObserver {
   final HomeRepo homeRepo;
   final CheckinRepository checkinRepo;
   final SharedPreferences sharedPreferences;
@@ -33,6 +39,62 @@ class PaidHomeController extends GetxController {
   final RxBool isSavingMainGoal = false.obs;
   final RxString errorMessage = ''.obs;
 
+  // ── Class watcher (Oct 2026) ─────────────────────────────────────────
+  // Joining class must never depend on one live update arriving. From 15
+  // min before her class until it ends, while it isn't live yet, ask the
+  // server every 20 s; and again whenever the app comes back to the
+  // front. A missed socket/push is fixed within 20 s.
+  static const Duration kWatchEvery = Duration(seconds: 20);
+  static const int kWatchFromMinutes = 15;
+  Timer? _classWatch;
+
+  @override
+  void onInit() {
+    super.onInit();
+    WidgetsBinding.instance.addObserver(this);
+    _classWatch = Timer.periodic(kWatchEvery, (_) => _watchTick());
+  }
+
+  @override
+  void onClose() {
+    _classWatch?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.onClose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && dashboard.value != null) {
+      silentRefresh();
+    }
+  }
+
+  bool _watching = false;
+  Future<void> _watchTick() async {
+    final d = dashboard.value;
+    if (d == null || _watching) return;
+    final l = effectiveLiveClass(d);
+    if (l == null) return;
+    final st = (l.status ?? '').trim();
+    if (st == 'Cancelled' || st == 'Completed') return;
+    // Live AND has its join link: nothing to wait for.
+    if (st == 'In Progress' && (l.trainerLink ?? '').trim().isNotEmpty) return;
+    final now = AppClock.now();
+    final day = DateTime(now.year, now.month, now.day).add(Duration(days: l.dayOffset));
+    final start = parseSlotWallClock(l.start, day);
+    if (start == null) return;
+    final end = parseSlotWallClock(l.end, day) ?? start.add(const Duration(hours: 1));
+    final inWindow = !now.isBefore(start.subtract(const Duration(minutes: kWatchFromMinutes))) &&
+        now.isBefore(end);
+    if (!inWindow) return;
+    _watching = true;
+    try {
+      await silentRefresh();
+    } finally {
+      _watching = false;
+    }
+  }
+
   Future<void> loadDashboard() async {
     // Guard against re-entrant calls (e.g., rapid pull-to-refresh).
     if (isLoading.value) return;
@@ -42,6 +104,7 @@ class PaidHomeController extends GetxController {
       final result = await homeRepo.getPaidHomeDashboard();
       if (result != null) {
         dashboard.value = result;
+        _refreshTrialClasses();
         // Push phase to the global theme controller so every screen updates.
         try {
           Get.find<CycleThemeController>().setPhase(result.cycle?.phase);
@@ -59,6 +122,13 @@ class PaidHomeController extends GetxController {
 
   Future<void> refreshDashboard() => loadDashboard();
 
+  /// Free trial: keep the home trial box's class list fresh (throttled
+  /// to every 2 min inside HomeController). Never blocks the dashboard.
+  void _refreshTrialClasses() {
+    if (!Get.isRegistered<HomeController>()) return;
+    unawaited(Get.find<HomeController>().refreshTrialClassesIfStale());
+  }
+
   /// Heartbeat-friendly refresh. Skips the [isLoading] toggle so polling
   /// timers don't fight pull-to-refresh, and never overwrites the
   /// existing [dashboard] with `null` on transient failures. Returns
@@ -69,6 +139,7 @@ class PaidHomeController extends GetxController {
       final result = await homeRepo.getPaidHomeDashboard();
       if (result == null) return false;
       dashboard.value = result;
+      _refreshTrialClasses();
       return true;
     } catch (e) {
       debugPrint('[PaidHomeController.silentRefresh] $e');

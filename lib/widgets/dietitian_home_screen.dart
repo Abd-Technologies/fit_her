@@ -6,9 +6,10 @@ import 'package:fitness_zone_2/UI/diet_screen/clients_screen.dart';
 import 'package:fitness_zone_2/UI/diet_screen/dietitian_v2/drafts_dashboard_screen.dart';
 import 'package:fitness_zone_2/UI/diet_screen/dietitian_v2/plans_to_deliver_screen.dart';
 import 'package:fitness_zone_2/UI/diet_screen/dietitian_v2/flagged_reviews_screen.dart';
-import 'package:fitness_zone_2/UI/diet_screen/new_appointment_request.dart';
+import 'package:fitness_zone_2/UI/admin_module/admin_v2/admin_escalations_screen.dart';
 import 'package:fitness_zone_2/UI/diet_screen/slots_screen.dart';
 import 'package:fitness_zone_2/UI/diet_screen/today_sessions_screen.dart';
+import 'package:fitness_zone_2/UI/class_feedback/class_feedback_screens.dart';
 import 'package:fitness_zone_2/data/controllers/auth_controller/auth_controller.dart';
 import 'package:fitness_zone_2/data/controllers/diet_contoller/diet_controller.dart';
 import 'package:fitness_zone_2/data/controllers/dietitian_dashboard_controller/dietitian_dashboard_controller.dart';
@@ -22,6 +23,7 @@ import '../values/my_colors.dart';
 import '../values/my_imgs.dart';
 import 'app_bar_widget.dart';
 import 'package:get/get.dart';
+import 'package:fitness_zone_2/widgets/anim/live_dot.dart';
 
 // ── Shared v2 design tokens ────────────────────────────────────────────
 // Reused verbatim from flagged_reviews_screen.dart / client_consultation_
@@ -67,12 +69,17 @@ class _DietitianProfileScreenState extends State<DietitianProfileScreen> {
     // — meaning the home screen itself had no idea whether she had a
     // consultation today or a plan to deliver. Guarded so this doesn't
     // re-fetch if something else already populated them.
-    if (!dietController.appointmentLoad.value) {
-      dietController.getAppointmentsOfDiets();
-    }
-    if (!dietController.clientDataLoad.value) {
-      dietController.clientsOfDietFunc();
-    }
+    // After the first frame: these flip observable state that Obx
+    // widgets on this screen watch (doing it mid-build can crash).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!dietController.appointmentLoad.value) {
+        dietController.getAppointmentsOfDiets();
+      }
+      if (!dietController.clientDataLoad.value) {
+        dietController.clientsOfDietFunc();
+      }
+    });
   }
 
   Future<void> _loadFlaggedCount() async {
@@ -171,15 +178,22 @@ class _DietitianProfileScreenState extends State<DietitianProfileScreen> {
               final loadedGate = dietController.appointmentLoad.value &&
                   dietController.clientDataLoad.value;
               final now = DateTime.now();
+              final todayStart = DateTime(now.year, now.month, now.day);
+              // Rolling week: today + the next 6 days.
+              final weekEnd = todayStart.add(const Duration(days: 7));
               final appts = dietController.dietAppointmentsModel?.appointments ?? [];
-              final todayAppts = appts.where((a) {
+              final weekAppts = appts.where((a) {
                 final d = a.date;
-                return d.year == now.year &&
-                    d.month == now.month &&
-                    d.day == now.day &&
+                return !d.isBefore(todayStart) &&
+                    d.isBefore(weekEnd) &&
                     a.status != 'canceled' &&
                     a.status != 'canceledByUser';
-              }).toList();
+              }).toList()
+                ..sort((a, b) => a.date.compareTo(b.date));
+              final todayCount = weekAppts.where((a) =>
+                  a.date.year == now.year &&
+                  a.date.month == now.month &&
+                  a.date.day == now.day).length;
 
               final clients = dietController.getDietClientsModel?.cliets ?? [];
               // planPipeline is computed separately from the status badge,
@@ -196,10 +210,22 @@ class _DietitianProfileScreenState extends State<DietitianProfileScreen> {
                   ? clients.where((c) => c.planPipeline?.overdue == true).length
                   : clients.where((c) => c.status == 'PLAN_OVERDUE').length;
 
-              final consultSubtitle = todayAppts.isEmpty
-                  ? 'Nothing booked today'
-                  : "${todayAppts.first.clientUser?.firstName ?? 'Client'}'s at ${todayAppts.first.slotDiet?.start ?? ''}"
-                      "${todayAppts.length > 1 ? ' +${todayAppts.length - 1} more' : ''}";
+              // "Next: Sara, Mon 6:00 PM" — her very next session this
+              // week, plus how many of the week's are today.
+              const wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+              String consultSubtitle;
+              if (weekAppts.isEmpty) {
+                consultSubtitle = 'Nothing booked this week';
+              } else {
+                final next = weekAppts.first;
+                final isToday = next.date.year == now.year &&
+                    next.date.month == now.month &&
+                    next.date.day == now.day;
+                final dayLabel = isToday ? 'Today' : wd[next.date.weekday - 1];
+                consultSubtitle =
+                    "Next: ${next.clientUser?.firstName ?? 'Client'}, $dayLabel ${next.slotDiet?.start ?? ''}"
+                    "${todayCount > 0 ? ' · $todayCount today' : ''}";
+              }
               final plansSubtitle = plansDue.isEmpty
                   ? 'Nothing owed right now'
                   : overdueCount > 0
@@ -215,8 +241,8 @@ class _DietitianProfileScreenState extends State<DietitianProfileScreen> {
                       icon: Icons.event_available_outlined,
                       accent: _kAccent,
                       accentBg: _kAccentBg,
-                      count: '${todayAppts.length}',
-                      label: 'Consultations today',
+                      count: '${weekAppts.length}',
+                      label: 'Consultations this week',
                       subtitle: consultSubtitle,
                       onTap: () => Get.to(() => TodaySessionsScreen()),
                     ),
@@ -239,6 +265,8 @@ class _DietitianProfileScreenState extends State<DietitianProfileScreen> {
                 ),
               );
             }),
+            // Nov 2026: her consultation ratings (anonymous).
+            const DietitianRatingsTile(),
             const SizedBox(height: 10),
             const _RecentMessagesCard(),
             const SizedBox(height: 20),
@@ -246,15 +274,15 @@ class _DietitianProfileScreenState extends State<DietitianProfileScreen> {
             // ── Quick actions ───────────────────────────────────────
             Row(
               children: [
+                // "Requests" removed: bookings confirm automatically now.
+                // Alerts = missed sessions, plan delays, medical concerns
+                // about HER clients (server scopes the list to her).
                 Expanded(
                   child: _QuickActionCard(
-                    icon: null,
-                    svgIcon: MyImgs.requests,
-                    label: 'Requests',
-                    onTap: () {
-                      dietController.getRescheduleAppointments();
-                      Get.to(() => RequestsScreen());
-                    },
+                    icon: Icons.notification_important_outlined,
+                    label: 'Alerts',
+                    onTap: () => Get.to(() =>
+                        const AdminEscalationsScreen(title: 'Client alerts')),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -353,7 +381,8 @@ class _DietitianProfileScreenState extends State<DietitianProfileScreen> {
                                       clientUser: appointMent.clientUser!,
                                       slotDiet: appointMent.slotDiet,
                                       appointmentId: appointMent.id,
-                                      planId: null));
+                                      appointmentDate: appointMent.date,
+                                      planId: appointMent.planId));
                                 }
                               },
                               name: [
@@ -1018,16 +1047,20 @@ class _StatusPill extends StatelessWidget {
         color: fg.withOpacity(0.12),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontFamily: 'Poppins',
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          color: fg,
-          letterSpacing: 0.4,
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        // Live session: small breathing dot (off with "reduce motion").
+        if (isLive) ...[FhLiveDot(size: 5, color: fg), const SizedBox(width: 5)],
+        Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            color: fg,
+            letterSpacing: 0.4,
+          ),
         ),
-      ),
+      ]),
     );
   }
 }

@@ -372,17 +372,19 @@ class _SleepButton extends StatelessWidget {
         // _ActionButton treatment.
         // The logged preset fills in solid so she can see what she saved.
         decoration: BoxDecoration(
-          color: selected ? accent : accent.withOpacity(0.12),
+          // Unselected: white with a soft border, dark ink text. Colour
+          // only once she has logged that preset.
+          color: selected ? accent : Colors.white,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-              color: selected ? accent : accent.withOpacity(0.45), width: 1),
+              color: selected ? accent : const Color(0xFFE1EADC), width: 1),
         ),
         child: Text(
           label,
           style: TextStyle(
             fontSize: 10.5,
             fontWeight: FontWeight.w700,
-            color: selected ? Colors.white : accent,
+            color: selected ? Colors.white : const Color(0xFF163220),
           ),
         ),
       ),

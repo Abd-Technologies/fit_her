@@ -206,6 +206,20 @@ class Constants {
   static String updateDietLink = "/admin/updateDietitionLink";
   static String updateTrainerJoin = "/admin/updateTrainerJoin";
   static String updateSlotStatus = "/admin/updateSlotStatus";
+  // App update popup (Oct 2026)
+  static String appVersion = "/users/app-version";
+  static String adminAppVersion = "/admin/app-version";
+  static String appVersionReport = "/users/app-version/report";
+  static String adminAppVersionAudience = "/admin/app-version/audience";
+  static String adminAppVersionNotify = "/admin/app-version/notify";
+  // Class rooms (Oct 2026): trainer Zoom room set once by admin.
+  static String trainerClass = "/admin/trainerClass";
+  static String trainerClassBackupLink = "/admin/trainerClass/backupLink";
+  static String trainerRooms = "/admin/trainerRooms";
+  static String trainerRoom = "/admin/trainerRoom";
+  static String mainClassRoom = "/admin/mainClassRoom";
+  // Free trial length set by admin (GET + POST).
+  static String adminTrialDays = "/admin/trialDays";
   static String addTeamMember = "/admin/addTeamMember";
   static String updateUser = "/admin/updateUser";
   static String paymentSuccess = "/admin/payment_success";
@@ -228,8 +242,6 @@ class Constants {
   static const String userEscalations = "/users/escalations";
   // Append "/<variable>/dismiss" or "/<variable>/complete".
   static const String popupAck = "/users/popup";
-  // Append "/<id>/no-show" for the consultant no-show report.
-  static const String appointmentNoShowSuffix = "/no-show";
   // Admin-side endpoints.
   static const String adminPreConsultationProfile = "/admin/pre-consultation";
   static const String adminDay7Reviews = "/admin/day7-reviews";
@@ -247,6 +259,8 @@ class Constants {
   static String updateDeviceToken = "/users/device-token";
   static String notifications = "/users/notifications";
   static String markNotificationsRead = "/users/notifications/read";
+  // Swiped away in the bell: hidden on the server too (Oct 2026).
+  static String hideNotifications = "/users/notifications/hide";
   static String deleteUser = "/admin/delete_user";
   static String updateSlotTrainer = "/admin/update_slot_trainer";
   static String addFreeTrailUser = "/admin/createFreeTrialUser";
@@ -275,6 +289,20 @@ class Constants {
   static String markMotivationAttendance = "/attendance/mark";
   static String classPresenceJoin = "/attendance/presence/join";
   static String classPresenceLeave = "/attendance/presence/leave";
+  // Class feedback (fitHer Flows › Class feedback)
+  static String classFeedbackPending = "/attendance/feedback/pending";
+  // Free-trial moments (Nov 2026): GET today's moment, POST "seen".
+  static String trialMoment = "/trial/moment";
+  static String trialMomentSeen = "/trial/moment/seen";
+  // One weekly check-in (Oct 2026): widgets/weekly_checkin/weekly_checkin_sheet.dart
+  static String weeklyCheckinState = "/users/weekly-checkin/state";
+  static String weeklyCheckinSave = "/users/weekly-checkin";
+  static String weeklyCheckinMeasurements = "/users/weekly-checkin/measurements";
+  static String weeklyCheckinHistory = "/users/weekly-checkin/history";
+  static String classFeedback = "/attendance/feedback";
+  static String classFeedbackSkip = "/attendance/feedback/skip";
+  static String classFeedbackTrainer = "/attendance/feedback/trainer";
+  static String adminClassFeedback = "/admin/classFeedback";
 
   ///  Country ///
   static String country = "/country";

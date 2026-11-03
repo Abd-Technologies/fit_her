@@ -1,10 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../helper/notification_services.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
-/// Schedules local notifications for morning nudge and weekly check-in.
+/// Schedules local notifications for the daily nudge (1 PM) and weekly check-in.
 ///
 /// Works alongside [NotificationServices] which handles FCM push notifications.
 /// Uses the same Android channel ('high_importance_channel') for consistency.
@@ -19,32 +22,73 @@ class NotificationScheduler {
 
   static bool _initialized = false;
 
-  /// Initializes timezone data. Must be called once at app startup.
+  /// Initializes timezone data and the notifications plugin. Must be
+  /// called once at app startup (splash).
   static Future<void> initialize() async {
     if (_initialized) return;
     tz.initializeTimeZones();
     final String timeZoneName = await FlutterTimezone.getLocalTimezone();
     tz.setLocalLocation(tz.getLocation(timeZoneName));
+    _timeZoneName = timeZoneName;
+    // Oct 2026: the plugin was only set up when the first push arrived
+    // while the app was open (NotificationServices.initLocalNotifications),
+    // so the morning reminder could be scheduled before it was ready.
+    // Set it up here too. A later initLocalNotifications call still adds
+    // its own tap handling on top.
+    // One shared setup (tap routing, Android channel):
+    // NotificationServices.ensureLocalNotifications.
+    await NotificationServices.ensureLocalNotifications();
     _initialized = true;
     debugPrint('🔔 NotificationScheduler initialized, timezone: $timeZoneName');
   }
 
-  /// Schedules the morning nudge at 8:00 AM daily.
+  /// Daily nudge time (Oct 2026): the middle of the day, 1:00 PM in her
+  /// own time zone (the phone's zone, see [initialize]). Was 8:00 AM.
+  static const int dailyNudgeHour = 13;
+  static const int dailyNudgeMinute = 0;
+
+  /// What is scheduled now: "13:00|Asia/Karachi". Used so an app open
+  /// does not schedule it again; it is only redone when the time or her
+  /// time zone changes, or it is missing.
+  static const String _kDailyNudgeKey = 'daily_nudge_scheduled';
+  static String _timeZoneName = '';
+
+  /// Schedules the daily nudge: once a day at [dailyNudgeHour] in her time
+  /// zone, repeating every day by itself (she doesn't need to open the
+  /// app). Opening the app doesn't move or reset it.
   ///
   /// Lock screen safe — no cycle/health data in title or body.
   /// If [enabled] is false, cancels the existing notification.
   static Future<void> scheduleMorningNudge({
     required bool enabled,
   }) async {
+    SharedPreferences? prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+    } catch (_) {}
     if (!enabled) {
       await _plugin.cancel(morningNudgeId);
+      await prefs?.remove(_kDailyNudgeKey);
       return;
     }
 
-    final scheduledDate = nextOccurrence(8, 0);
+    final want = '$dailyNudgeHour:$dailyNudgeMinute|$_timeZoneName';
+    try {
+      final pending = await _plugin.pendingNotificationRequests();
+      final alreadySet = pending.any((p) => p.id == morningNudgeId);
+      if (alreadySet && prefs?.getString(_kDailyNudgeKey) == want) {
+        debugPrint('🔔 Daily nudge already set ($want)');
+        return;
+      }
+    } catch (_) {
+      // Can't read what is scheduled: schedule it again (same id, so it
+      // replaces the old one; never two).
+    }
+
+    final scheduledDate = nextOccurrence(dailyNudgeHour, dailyNudgeMinute);
 
     try {
-      debugPrint('🔔 Scheduling morning nudge for: $scheduledDate');
+      debugPrint('🔔 Scheduling daily nudge, first: $scheduledDate');
       await _plugin.zonedSchedule(
         morningNudgeId,
         'Your daily insight is ready',
@@ -53,10 +97,13 @@ class NotificationScheduler {
         _notificationDetails(),
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+        // Repeat every day at this time.
+        matchDateTimeComponents: DateTimeComponents.time,
       );
-      debugPrint('🔔 Morning nudge scheduled successfully');
+      await prefs?.setString(_kDailyNudgeKey, want);
+      debugPrint('🔔 Daily nudge scheduled');
     } catch (e) {
-      debugPrint('🔔 ERROR scheduling morning nudge: $e');
+      debugPrint('🔔 ERROR scheduling daily nudge: $e');
     }
   }
 

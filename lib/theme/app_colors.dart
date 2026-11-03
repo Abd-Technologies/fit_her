@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 
 /// Fit Her Design System — Color Tokens
 ///
+/// NOTE (Oct 2026): these are the OLD (V1) colours. The design that ships
+/// today (V2 screens) uses brand green #6DC55A and forest ink #163220;
+/// see lib/docs/newdesign.md. `primary` below (#8AD167) is kept only
+/// because 130 older widgets still use it.
+///
 /// Semantic color names organized by role.
 /// Migration from MyColors → AppColors happens in Phase 3.
 ///

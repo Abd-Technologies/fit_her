@@ -49,6 +49,10 @@ class V2PlanTimelineBanner extends StatelessWidget {
   /// fallback (BookConsultationSheet vs OurPlansScreen).
   final VoidCallback? onBookFollowUp;
 
+  /// Button label for her next step ("Book follow-up", "Do my check-in",
+  /// "Renew my plan"...). Short so it fits small phones.
+  final String ctaLabel;
+
   const V2PlanTimelineBanner({
     super.key,
     required this.plan,
@@ -57,6 +61,7 @@ class V2PlanTimelineBanner extends StatelessWidget {
     required this.progressPercent,
     required this.endingSoon,
     this.onBookFollowUp,
+    this.ctaLabel = 'Book follow-up',
   });
 
   @override
@@ -132,7 +137,7 @@ class V2PlanTimelineBanner extends StatelessWidget {
             if (endingSoon && onBookFollowUp != null) ...[
               SizedBox(height: 14.h),
               V2DarkCtaButton(
-                label: 'Book Follow-up Consultation',
+                label: ctaLabel,
                 onPressed: onBookFollowUp,
               ),
             ],

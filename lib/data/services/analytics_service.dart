@@ -760,4 +760,42 @@ class AnalyticsService extends GetxService {
       if (linkType != null) 'link_type': linkType,
     });
   }
+
+  // ========== Growth analytics (Oct 2026) ==========
+  // Mixpanel = behaviour only (taps, screens, drop-off). No names, phone,
+  // email, comments or health answers are ever sent. Facts (attendance,
+  // money, trainers) live in the admin app, not here.
+
+  /// Any event by name (the new growth events use this).
+  Future<void> trackEvent(String name, [Map<String, dynamic>? props]) async {
+    try {
+      final clean = <String, dynamic>{};
+      props?.forEach((k, v) {
+        if (v != null) clean[k] = v;
+      });
+      await _mixpanel?.track(name, properties: clean);
+    } catch (_) {}
+  }
+
+  /// Who she is, without names: shown on every event as a "super property"
+  /// and on her Mixpanel profile, so every chart can be split by it.
+  Future<void> setProfile(Map<String, dynamic> props) async {
+    try {
+      final clean = <String, dynamic>{};
+      props.forEach((k, v) {
+        if (v != null && '$v'.isNotEmpty) clean[k] = v;
+      });
+      if (clean.isEmpty) return;
+      _mixpanel?.registerSuperProperties(clean);
+      final people = _mixpanel?.getPeople();
+      clean.forEach((k, v) => people?.set(k, v));
+    } catch (_) {}
+  }
+
+  /// Logout: forget her, so the next person on this phone is someone new.
+  Future<void> resetUser() async {
+    try {
+      _mixpanel?.reset();
+    } catch (_) {}
+  }
 }

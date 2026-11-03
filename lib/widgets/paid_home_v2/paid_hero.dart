@@ -1,9 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../data/Repos/plan_freeze_repo/plan_freeze_repository.dart';
 import '../../data/controllers/auth_controller/auth_controller.dart';
+import '../../data/controllers/home_controller/home_controller.dart';
+import '../../data/controllers/paid_home_controller/paid_home_controller.dart';
 import '../../data/models/home_dashboard/home_dashboard_model.dart';
+import '../../helper/class_join_memory.dart';
+import '../../utils/app_clock.dart';
+import '../../utils/slot_input_builder.dart' show parseSlotWallClock;
 import '../../values/constants.dart';
 import '../new_home/phase_theme.dart';
 import 'paid_hero_coming_up.dart';
@@ -38,13 +45,47 @@ class _PaidHeroState extends State<PaidHero> {
   // dims/disables during the brief loading window -- an active plan
   // never flashes as paused.
   Map<String, dynamic>? _freezeStatus;
-  bool get _isFrozen => _freezeStatus?['isFrozen'] == true;
+  // Until this card's own check comes back, use the last known answer
+  // (HomeController.planFrozen). Coming back to Home rebuilds this card;
+  // starting from "not frozen" flashed the class section for a second
+  // before hiding it (Oct 2026).
+  bool get _isFrozen {
+    final s = _freezeStatus;
+    if (s != null) return s['isFrozen'] == true;
+    return Get.isRegistered<HomeController>() &&
+        Get.find<HomeController>().planFrozen.value;
+  }
+
+  // Re-checks every 30s so a class moves into the big card on time even
+  // when the dashboard was loaded earlier (see _effectiveLive).
+  Timer? _ticker;
 
   @override
   void initState() {
     super.initState();
     _fetchFreezeStatus();
+    // Repaint every 20 s so a class moves into the big card on time.
+    // Checking the server for "has the trainer started?" is done by
+    // PaidHomeController's class watcher (every 20 s from 15 min before).
+    _ticker = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (mounted) setState(() {});
+    });
   }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  // Same lead time as the server's PRE_START_LEAD_MINUTES.
+  static const int _kBigCardLeadMinutes = 30;
+
+  // The server only puts a class in `live` if it's within 30 min when the
+  // dashboard is fetched. If the screen was loaded earlier, the class is
+  // still sitting in Coming Up as a small "Starts in 7m" tile. Promote
+  // today's next class to the big card once it's within 30 min.
+  LiveClass? _effectiveLive(HomeDashboardModel d) => effectiveLiveClass(d);
 
   Future<void> _fetchFreezeStatus() async {
     try {
@@ -56,9 +97,13 @@ class _PaidHeroState extends State<PaidHero> {
       if (res.body != null &&
           res.body['status'] == '1' &&
           res.body['data'] is Map) {
+        final data = Map<String, dynamic>.from(res.body['data']);
+        if (Get.isRegistered<HomeController>()) {
+          Get.find<HomeController>().planFrozen.value = data['isFrozen'] == true;
+        }
         if (mounted) {
           setState(() {
-            _freezeStatus = Map<String, dynamic>.from(res.body['data']);
+            _freezeStatus = data;
           });
         }
       }
@@ -71,6 +116,7 @@ class _PaidHeroState extends State<PaidHero> {
   @override
   Widget build(BuildContext context) {
     final dashboard = widget.dashboard;
+    final promotedLive = _effectiveLive(dashboard);
     final phase = parseCyclePhase(dashboard.cycle?.phase);
     final theme = PhaseTheme.forPhase(phase);
 
@@ -147,16 +193,25 @@ class _PaidHeroState extends State<PaidHero> {
                       theme: theme,
                       phase: phase,
                     ),
-                    _buildDivider(theme),
-                    PaidHeroLiveSection(
-                      live: dashboard.live,
-                      theme: theme,
-                      isFrozen: _isFrozen,
-                    ),
-                    PaidHeroComingUp(
-                      comingUp: dashboard.comingUp,
-                      isFrozen: _isFrozen,
-                    ),
+                    // Plan paused: no class times at all (Oct 2026). She
+                    // only logs and sees insights until she resumes.
+                    if (!_isFrozen) ...[
+                      _buildDivider(theme),
+                      PaidHeroLiveSection(
+                        live: promotedLive,
+                        theme: theme,
+                        isFrozen: _isFrozen,
+                      ),
+                      PaidHeroComingUp(
+                        comingUp: dashboard.live == null && promotedLive != null
+                            ? dashboard.comingUp
+                                .where((x) => x.id != promotedLive.slotId)
+                                .toList()
+                            : dashboard.comingUp,
+                        isFrozen: _isFrozen,
+                      ),
+                    ] else
+                      const SizedBox(height: 6),
                   ],
                 ),
               ),
@@ -213,4 +268,65 @@ Color _gradTint(CyclePhase phase) {
 /// HTML. Small variance matters — too much green saturates the top-right.
 double _gradAlpha(CyclePhase phase) {
   return phase == CyclePhase.follicular ? 0.40 : 0.50;
+}
+
+/// The class shown in the big hero card (shared by paid and preview
+/// homes): server `live`, else the next class that hasn't ended yet.
+LiveClass? effectiveLiveClass(HomeDashboardModel d) {
+  final live = d.live;
+  if (live != null && !_trialJoinOver(live)) return live;
+  // Skip a class that was cancelled (auto or by the trainer) or ended
+  // early, so the next class can take the big card. Also skip the live
+  // class once a trial user's join time is over: the next class shows
+  // straight away instead of an empty card until the next refresh.
+  final open = d.comingUp.where((x) {
+    final st = (x.status ?? '').trim();
+    return st != 'Cancelled' && st != 'Completed' && x.id != live?.slotId;
+  }).toList();
+  // The next class that hasn't ended yet always takes the big card:
+  // calm "UP NEXT" until 30 min before, then the countdown (the card
+  // decides). After the last class it's tomorrow's first class.
+  final now = AppClock.now();
+  ComingUpClass? c;
+  var offset = 0;
+  for (final x in open) {
+    final off = x.dayOffset ?? 0;
+    final day = DateTime(now.year, now.month, now.day).add(Duration(days: off));
+    final start = parseSlotWallClock(x.start, day);
+    if (start == null) continue;
+    final end = parseSlotWallClock(x.end, day);
+    final over = end != null ? !now.isBefore(end) : now.isAfter(start);
+    if (over) continue;
+    c = x;
+    offset = off;
+    break;
+  }
+  if (c == null) return null;
+  return LiveClass(
+    slotId: c.id,
+    classType: c.classType,
+    trainerName: c.trainerName,
+    durationMinutes: c.durationMinutes,
+    status: c.status,
+    trainerLink: c.trainerLink,
+    level: c.level,
+    start: c.start,
+    end: c.end,
+    dayOffset: offset,
+  );
+}
+
+
+/// Trial user, class started more than her join window ago, and she
+/// hasn't joined it: she can't join any more.
+bool _trialJoinOver(LiveClass l) {
+  if (!Get.isRegistered<HomeController>()) return false;
+  final home = Get.find<HomeController>();
+  if (!home.isFreeTrialUser.value) return false;
+  if (l.joinedToday || ClassJoinMemory.joinedToday(l.slotId)) return false;
+  final now = AppClock.now();
+  final day = DateTime(now.year, now.month, now.day).add(Duration(days: l.dayOffset));
+  final start = parseSlotWallClock(l.start, day);
+  if (start == null) return false;
+  return now.isAfter(start.add(Duration(minutes: home.joinWindowMinutes.value)));
 }

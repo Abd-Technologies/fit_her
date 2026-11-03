@@ -174,6 +174,13 @@ class DietPlanUserRepository extends GetxService {
       userPlanId: _toInt(data['userPlanId']),
       dietitianId: _toInt(data['dietitianId']),
       hasActivePlan: data['hasActivePlan'] == true,
+      bookingLocked: data['bookingLocked'] == true,
+      lateChangeAvailable: data['lateChangeAvailable'] != false,
+      packageEndsOn: DateTime.tryParse('${data['packageEndsOn'] ?? ''}')?.toLocal(),
+      halfwayOpensOn: DateTime.tryParse('${data['halfwayOpensOn'] ?? ''}')?.toLocal(),
+      nextStep: data['nextStep']?.toString(),
+      planEnded: data['planEnded'] == true,
+      planEndedOn: DateTime.tryParse('${data['planEndedOn'] ?? ''}')?.toLocal(),
       planPreparing: data['planPreparing'] is Map
           ? PlanPreparingV2.fromJson(
               Map<String, dynamic>.from(data['planPreparing'] as Map))
@@ -234,13 +241,51 @@ class BookingContextV2 {
     this.userPlanId,
     this.dietitianId,
     this.hasActivePlan = false,
+    this.bookingLocked = false,
+    this.lateChangeAvailable = true,
+    this.packageEndsOn,
+    this.halfwayOpensOn,
+    this.nextStep,
+    this.planEnded = false,
+    this.planEndedOn,
     this.planPreparing,
   });
+
+  /// Her paid plan has ended (no live plan). She still sees her meal
+  /// plan (read-only); booking and classes need a renewal.
+  final bool planEnded;
+  final DateTime? planEndedOn;
+
+  /// What she should do next when a plan ends (server decides, so the
+  /// app never offers a button the server would refuse): explore_plans,
+  /// renew, locked, book_initial, day15_checkin, book_followup,
+  /// followup_booked. Null on older backends.
+  final String? nextStep;
+
+  /// Self-booking is locked for this package (second missed session).
+  /// Booking entry points show BookingLockedSheet instead.
+  final bool bookingLocked;
+
+  /// Her one free late change (cancel or miss inside 24 h) on this
+  /// package is still unused. Once used, a session inside 24 h can't be
+  /// cancelled. Oct 2026. True on older backends.
+  final bool lateChangeAvailable;
+
+  /// When her package (UserPlan) ends. Oct 2026.
+  final DateTime? packageEndsOn;
+
+  /// When the halfway check-in that unlocks the follow-up opens (only
+  /// while nextStep == day15_checkin). Oct 2026.
+  final DateTime? halfwayOpensOn;
 
   /// True when we have everything `BookConsultationSheet.show(...)`
   /// requires. False → caller routes to OurPlansScreen instead.
   bool get canBook =>
-      userId != null && userPlanId != null && dietitianId != null;
+      userId != null &&
+      userPlanId != null &&
+      dietitianId != null &&
+      !planEnded &&
+      nextStep != 'renew';
 }
 
 /// The client has had her consultation and her plan is being built.

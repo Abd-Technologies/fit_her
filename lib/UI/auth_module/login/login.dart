@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -11,6 +13,7 @@ import '../../../values/my_imgs.dart';
 import '../../../widgets/toasts.dart';
 import '../managePassword/forgot_password/enter_email.dart';
 import '../sign_up_screen/signup_screen_user.dart';
+import '../walt_through/animated_cycle_wheel.dart';
 
 /// Sprint 1 / S-02 Sign In — V2 redesign.
 ///
@@ -22,7 +25,11 @@ import '../sign_up_screen/signup_screen_user.dart';
 /// bottom-sheet picker, then calls the existing `AuthController.login()`
 /// with the selected userType.
 class Login extends StatefulWidget {
-  const Login({super.key, this.showDropDown = false});
+  const Login({super.key, this.showDropDown = false, this.fromWelcome = false});
+
+  /// Opened from the Welcome screen's "Log in": the ring flies in (Hero)
+  /// and the sign-in card slides up from the bottom (and back down on Back).
+  final bool fromWelcome;
 
   // Preserved per audit Q-OPEN 14 — no current callers pass this, but the
   // signature is locked.
@@ -85,7 +92,7 @@ class _LoginState extends State<Login> {
                 children: [
                   _buildBackArrow(),
                   _buildHero(),
-                  Expanded(child: _buildSheet()),
+                  Expanded(child: _sheetEntrance(_buildSheet())),
                 ],
               ),
             ),
@@ -145,18 +152,39 @@ class _LoginState extends State<Login> {
     );
   }
 
-  // ── Hero with FitHer wordmark ──────────────────────────────────────────
+  // ── Hero: the animated cycle wheel (same as the Welcome screen) ──────
+  // Replaces the FitHer wordmark (Oct 2026). Smaller than on Welcome so
+  // the sign-in form keeps its room; it shrinks further on short phones.
   Widget _buildHero() {
+    final screenH = MediaQuery.sizeOf(context).height;
+    final size = math.min(150.w, screenH * 0.19);
     return Padding(
-      padding: EdgeInsets.fromLTRB(36.w, 16.h, 36.w, 24.h),
-      child: SizedBox(
-        height: 68.h,
-        child: Image.asset(
-          MyImgs.fitHerLogo,
-          width: 200.w,
-          fit: BoxFit.contain,
+      padding: EdgeInsets.fromLTRB(36.w, 0, 36.w, 14.h),
+      child: Center(
+        child: HeroMode(
+          // Same ring as Welcome. Flies in only when opened from Welcome;
+          // off when the phone asks for less motion.
+          enabled: widget.fromWelcome && !MediaQuery.disableAnimationsOf(context),
+          child: Hero(
+            tag: AnimatedCycleWheel.heroTag,
+            flightShuttleBuilder: AnimatedCycleWheel.heroFlight,
+            child: RepaintBoundary(child: AnimatedCycleWheel(size: size, drawIn: !widget.fromWelcome, showCaption: false)),
+          ),
         ),
       ),
+    );
+  }
+
+  /// From Welcome: the white card rises with the page (and slides back
+  /// down on Back). Otherwise unchanged.
+  Widget _sheetEntrance(Widget sheet) {
+    final route = ModalRoute.of(context)?.animation;
+    if (!widget.fromWelcome || route == null || MediaQuery.disableAnimationsOf(context)) return sheet;
+    return SlideTransition(
+      position: Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero).animate(
+        CurvedAnimation(parent: route, curve: Curves.fastOutSlowIn, reverseCurve: Curves.fastOutSlowIn.flipped),
+      ),
+      child: RepaintBoundary(child: sheet),
     );
   }
 
@@ -176,7 +204,7 @@ class _LoginState extends State<Login> {
         ),
       ),
       child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(28.w, 30.h, 28.w, 28.h),
+        padding: EdgeInsets.fromLTRB(28.w, 30.h, 28.w, 16.h),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -197,9 +225,9 @@ class _LoginState extends State<Login> {
             _buildSignInButton(),
             SizedBox(height: 14.h),
             _buildCreateAccountFooter(),
-            SizedBox(height: 18.h),
-            _buildTeamDivider(),
             SizedBox(height: 12.h),
+            _buildTeamDivider(),
+            SizedBox(height: 2.h),
             _buildTeamAdminButton(),
           ],
         ),
@@ -432,8 +460,6 @@ class _LoginState extends State<Login> {
             fontSize: 12.sp,
             fontWeight: FontWeight.w600,
             color: _primaryGreen,
-            decoration: TextDecoration.underline,
-            decorationColor: _primaryGreen,
           ),
         ),
       ),
@@ -589,53 +615,28 @@ class _LoginState extends State<Login> {
 
   // ── Team/Admin button — validate, then bottom-sheet picker ────────────
   Widget _buildTeamAdminButton() {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton(
-        style: OutlinedButton.styleFrom(
-          backgroundColor: Colors.white,
-          padding: EdgeInsets.symmetric(vertical: 14.h),
-          side: const BorderSide(color: _textDark, width: 1.5),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+    // Small text link (was a full-width outlined button). Same action.
+    return Center(
+      child: TextButton(
+        style: TextButton.styleFrom(
+          foregroundColor: _textDark,
+          padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.padded,
         ),
         onPressed: _onTeamAdminTapped,
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 22.w,
-              height: 22.w,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: _textDark,
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                Icons.settings,
-                size: 12.w,
-                color: _primaryGreen,
-              ),
-            ),
-            SizedBox(width: 10.w),
+            Icon(Icons.settings, size: 13.w, color: _label),
+            SizedBox(width: 6.w),
             Text(
               'Login as Team / Admin',
               style: TextStyle(
                 fontFamily: 'Poppins',
-                fontSize: 13.5.sp,
-                fontWeight: FontWeight.w700,
-                color: _textDark,
-              ),
-            ),
-            SizedBox(width: 8.w),
-            Text(
-              '→',
-              style: TextStyle(
-                fontFamily: 'Poppins',
-                fontSize: 13.5.sp,
+                fontSize: 12.sp,
                 fontWeight: FontWeight.w600,
-                color: _textDark,
+                color: _label,
               ),
             ),
           ],

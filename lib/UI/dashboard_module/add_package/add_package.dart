@@ -20,6 +20,7 @@ import '../../../widgets/circular_progress.dart';
 import '../../../widgets/custom_textfield.dart';
 import '../../../widgets/toasts.dart';
 import '../../diet_screen/doctor_details.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class AddPackage extends StatelessWidget {
   AddPackage({super.key, this.isFromUpdate = false, this.id});
@@ -127,9 +128,7 @@ class AddPackage extends StatelessWidget {
                       ),
                     )
                   : const Center(
-                      child: CircularProgressIndicator(
-                      color: MyColors.buttonColor,
-                    ))),
+                      child: FhLoader())),
               SizedBox(
                 height: 16.h,
               ),
@@ -183,9 +182,7 @@ class AddPackage extends StatelessWidget {
                           ),
                         )
                       : const Center(
-                          child: CircularProgressIndicator(
-                          color: MyColors.buttonColor,
-                        ))),
+                          child: FhLoader())),
               SizedBox(
                 height: 20.h,
               ),

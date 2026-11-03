@@ -41,6 +41,7 @@ import '../dashboard_module/bottom_bar_screen/bottom_bar_screen.dart';
 import 'login/login.dart';
 import 'sign_up_screen/goal_screen.dart';
 import 'sign_up_screen/sign_up_screen_questions.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class ZindigiEntryScreen extends StatefulWidget {
   const ZindigiEntryScreen({super.key});
@@ -219,7 +220,7 @@ class _ZindigiEntryScreenState extends State<ZindigiEntryScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (!_failed) const CircularProgressIndicator(),
+              if (!_failed) const FhLoader(),
               const SizedBox(height: 20),
               Text(
                 _status,

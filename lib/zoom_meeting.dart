@@ -4,6 +4,9 @@ class ZoomMeeting {
   static const MethodChannel _channel = MethodChannel('zoom_meeting');
   static const EventChannel _events = EventChannel('zoom_meeting/events');
 
+  /// Why the last join failed (Zoom's code/message), for analytics.
+  static String? lastError;
+
   static Stream<Map<String, dynamic>> get events {
     return _events.receiveBroadcastStream().map((event) {
       if (event is Map) {
@@ -54,10 +57,15 @@ class ZoomMeeting {
         if (password != null) 'password': password,
       };
 
+      lastError = null;
       final bool result = await _channel.invokeMethod('joinMeeting', arguments);
       return result;
     } on PlatformException catch (e) {
+      lastError = '${e.code}: ${e.message}';
       print('Failed to join meeting: ${e.message}');
+      return false;
+    } catch (e) {
+      lastError = '$e';
       return false;
     }
   }
@@ -77,6 +85,7 @@ class ZoomMeeting {
 // Example usage class
 class ZoomMeetingController {
   bool _isInitialized = false;
+  bool get isReady => _isInitialized;
 
   Future<void> initialize(String jwtToken) async {
     _isInitialized = await ZoomMeeting.initializeZoom(jwtToken);
@@ -95,6 +104,7 @@ class ZoomMeetingController {
   }) async {
     var success = false;
     if (!_isInitialized) {
+      ZoomMeeting.lastError = 'sdk_not_initialized';
       print('Zoom SDK not initialized. Please initialize first.');
       return success;
     }

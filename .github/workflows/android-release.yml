@@ -1,0 +1,81 @@
+# Build the Android app bundle and upload it to Google Play.
+# Run it from GitHub: Actions > "Android release" > Run workflow.
+# Setup and secrets: docs/CI_SETUP.md
+name: Android release
+
+on:
+  workflow_dispatch:
+    inputs:
+      track:
+        description: "Play track"
+        type: choice
+        options: [internal, alpha, beta, production]
+        default: internal
+      build_number:
+        description: "Build number (versionCode). Empty = the +N in pubspec.yaml"
+        required: false
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.35.6"
+          channel: stable
+          cache: true
+
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing"; exit 1; fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          cat > android/key.properties <<PROPS
+          storeFile=upload-keystore.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          PROPS
+          sed -i 's/^ *//' android/key.properties
+
+      - run: flutter pub get
+
+      - name: Build app bundle
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.build_number }}" ]; then ARGS="--build-number=${{ inputs.build_number }}"; fi
+          flutter build appbundle --release $ARGS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fither-aab
+          path: build/app/outputs/bundle/release/app-release.aab
+
+      - name: Upload to Google Play
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.abtechnologies.fitHer
+          releaseFiles: build/app/outputs/bundle/release/app-release.aab
+          track: ${{ inputs.track }}
+          status: completed
+
+      - name: Remove signing files
+        if: always()
+        run: rm -f android/app/upload-keystore.jks android/key.properties

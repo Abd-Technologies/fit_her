@@ -1,4 +1,6 @@
 import 'dart:convert';
+import '../../../UI/pre_consultation/pre_consultation_form_screen.dart';
+import '../consultation_controller/consultation_controller.dart';
 import 'dart:io';
 import 'package:fitness_zone_2/data/models/nutrition_model.dart';
 import 'package:image_picker/image_picker.dart';
@@ -18,6 +20,7 @@ import '../../../UI/diet_screen/calerie_info.dart';
 import '../../../helper/analytics_helper.dart';
 import '../../../values/constants.dart';
 import '../../../widgets/toasts.dart';
+import '../../api_provider/api_provider.dart';
 import '../../GetServices/CheckConnectionService.dart';
 import '../../Repos/home_repo/home_repo.dart';
 import '../../models/api_response/api_response_model.dart';
@@ -25,7 +28,9 @@ import '../../models/day_slots_of_diet.dart';
 import '../../models/diet_schedule_status.dart';
 import '../../models/get_all_dietitian_trainers/get_diet_plan_details.dart';
 import '../../models/get_clients_diet.dart';
+import 'package:fitness_zone_2/helper/meeting_link.dart';
 import '../auth_controller/auth_controller.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class DietController extends GetxController implements GetxService {
   SharedPreferences sharedPreferences;
@@ -94,58 +99,130 @@ class DietController extends GetxController implements GetxService {
     });
   }
 
+  /// Set when the clients list couldn't load, so screens can show the
+  /// reason and a Retry button instead of spinning forever.
+  final RxnString clientDataError = RxnString();
+
   clientsOfDietFunc() {
     clientDataLoad.value = false;
+    clientDataError.value = null;
+    // Every failure path ends the loading state.
+    void fail(String msg) {
+      clientDataError.value = msg;
+      clientDataLoad.value = true;
+    }
+
     connectionService.checkConnection().then((value) async {
       if (!value) {
         CustomToast.noInternetToast();
-      } else {
-        homeRepo
-            .getClients(
+        fail('No internet connection.');
+        return;
+      }
+      try {
+        final response = await homeRepo.getClients(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
           userId: sharedPreferences.getString(Constants.userId) ?? "",
-        )
-            .then((response) async {
-          // Get.back();
-          if (response.body["status"] == "0") {
-            CustomToast.failToast(msg: response.body["message"]);
-          } else if (response.body["status"] != "0") {
-            ApiResponse<DietClients> model = ApiResponse.fromJson(response.body, DietClients.fromJson);
-            if (model.status == "1") {
-              getDietClientsModel = model.data;
-
-              clientDataLoad.value = true;
-            }
-          }
-        });
+        );
+        final body = response.body;
+        if (body is! Map) {
+          fail('Could not load your clients. Please try again.');
+          return;
+        }
+        if (body["status"]?.toString() != "1") {
+          fail(body["message"]?.toString() ??
+              'Could not load your clients. Please try again.');
+          return;
+        }
+        ApiResponse<DietClients> model = ApiResponse.fromJson(
+            Map<String, dynamic>.from(body), DietClients.fromJson);
+        getDietClientsModel = model.data;
+        clientDataLoad.value = true;
+      } catch (_) {
+        fail('Could not load your clients. Please try again.');
       }
     });
   }
 
+  /// Set when the consultations list couldn't load, so the screen can
+  /// show the reason and a Retry button instead of spinning forever.
+  final RxnString appointmentError = RxnString();
+
+  /// Nov 2026: finished calls of the last 2 days (times + "Did she join?").
+  List<Appointment> recentFinished = [];
+
+  /// Nov 2026: "Yes, she joined" with about how long (minutes).
+  Future<bool> confirmClientJoined(int id, int minutes) async {
+    try {
+      final r = await Get.find<ApiProvider>().postData(
+        '/appointment/$id/client-joined',
+        body: {'minutes': minutes},
+        headers: {'accessToken': sharedPreferences.getString(Constants.accessToken) ?? ''},
+      );
+      final b = r.body;
+      final ok = b is Map && '${b['status']}' == '1';
+      if (ok) {
+        final a = recentFinished.firstWhereOrNull((x) => x.id == id);
+        a?.attendanceFlag = 'dietitian_confirmed';
+        CustomToast.successToast(msg: 'Thanks, noted');
+        appointmentLoad.value = false;
+        appointmentLoad.value = true;
+      } else {
+        CustomToast.failToast(msg: (b is Map ? b['message']?.toString() : null) ?? 'Could not update');
+      }
+      return ok;
+    } catch (_) {
+      CustomToast.failToast(msg: 'Could not update. Please try again.');
+      return false;
+    }
+  }
+
   getAppointmentsOfDiets() {
     appointmentLoad.value = false;
+    appointmentError.value = null;
+    // Every failure path ends the loading state; before, a failed or
+    // unexpected response left the spinner running for good.
+    void fail(String msg) {
+      appointmentError.value = msg;
+      appointmentLoad.value = true;
+    }
+
     connectionService.checkConnection().then((value) async {
       if (!value) {
         CustomToast.noInternetToast();
-      } else {
-        homeRepo
-            .getAppointments(
+        fail('No internet connection.');
+        return;
+      }
+      try {
+        final response = await homeRepo.getAppointments(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
           userId: sharedPreferences.getString(Constants.userId) ?? "",
-        )
-            .then((response) async {
-          // Get.back();
-          if (response.body["status"] == "0") {
-            CustomToast.failToast(msg: response.body["message"]);
-          } else if (response.body["status"] != "0") {
-            ApiResponse<DietAppointments> model = ApiResponse.fromJson(response.body, DietAppointments.fromJson);
-            if (model.status == "1") {
-              dietAppointmentsModel = model.data;
-
-              appointmentLoad.value = true;
-            }
-          }
-        });
+          recentDays: 2,
+        );
+        final body = response.body;
+        if (body is! Map) {
+          fail('Could not load consultations. Please try again.');
+          return;
+        }
+        if (body["status"]?.toString() != "1") {
+          fail(body["message"]?.toString() ??
+              'Could not load consultations. Please try again.');
+          return;
+        }
+        ApiResponse<DietAppointments> model =
+            ApiResponse.fromJson(
+                Map<String, dynamic>.from(body), DietAppointments.fromJson);
+        // Nov 2026: the list now also has the last 2 days' finished calls.
+        // Keep `appointments` as before (still-active ones only, which the
+        // home screen and sessions list use) and the finished ones apart.
+        final all = model.data?.appointments ?? <Appointment>[];
+        const active = {'pending', 'confirmed', 'In Progress'};
+        recentFinished = all.where((a) => a.status == 'completed').toList()
+          ..sort((a, b) => b.date.compareTo(a.date));
+        model.data?.appointments = all.where((a) => active.contains(a.status)).toList();
+        dietAppointmentsModel = model.data;
+        appointmentLoad.value = true;
+      } catch (_) {
+        fail('Could not load consultations. Please try again.');
       }
     });
   }
@@ -162,7 +239,7 @@ class DietController extends GetxController implements GetxService {
       CustomToast.noInternetToast();
       return;
     }
-    Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+    Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
     try {
       final response = await homeRepo.startAppointmentSession(
         accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
@@ -177,7 +254,18 @@ class DietController extends GetxController implements GetxService {
         if (appt != null) {
           appt.status = 'In Progress';
           update();
-          await _openMeetLink(appt.resolvedMeetLink);
+          // The consultations list is an Obx on appointmentLoad, so
+          // flip it to redraw the card as "Live now" immediately.
+          appointmentLoad.value = false;
+          appointmentLoad.value = true;
+          final link = appt.resolvedMeetLink;
+          if (link == null || link.isEmpty) {
+            CustomToast.failToast(
+                msg: "Session started, but this slot has no Meet link. "
+                    "Add one in your availability so the client can join.");
+          } else {
+            await _openMeetLink(link);
+          }
         }
       } else {
         CustomToast.failToast(
@@ -197,7 +285,7 @@ class DietController extends GetxController implements GetxService {
       CustomToast.noInternetToast();
       return;
     }
-    Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+    Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
     try {
       final response = await homeRepo.reportClientNoShow(
         accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
@@ -230,10 +318,10 @@ class DietController extends GetxController implements GetxService {
   // ever been set for this slot: the session still starts (the client
   // side already tells her to add one), it just can't auto-open yet.
   Future<void> _openMeetLink(String? link) async {
-    if (link == null || link.isEmpty) return;
-    final uri = Uri.tryParse(link);
-    if (uri == null || !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      CustomToast.failToast(msg: "Session started, but couldn't open the meeting link automatically.");
+    if (link == null || link.trim().isEmpty) return;
+    if (!await openMeetingLink(link)) {
+      CustomToast.failToast(
+          msg: "Couldn't open the meeting link. Check the Meet link saved on this slot.");
     }
   }
 
@@ -263,7 +351,7 @@ class DietController extends GetxController implements GetxService {
       CustomToast.noInternetToast();
       return false;
     }
-    Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+    Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
     try {
       final response = await homeRepo.updateAppointment(
         accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
@@ -459,7 +547,7 @@ class DietController extends GetxController implements GetxService {
             ApiResponse<GetDietPlanDetails> model = ApiResponse.fromJson(response.body, GetDietPlanDetails.fromJson);
             if (model.status == "1") {
               getDietPlanDetails = model.data;
-              await getUserPdfFile(id.toString());
+              // await getUserPdfFile(id.toString()); // legacy PDF diet plan — disabled (backend route removed)
               //
               dietPlanDetailsLoad.value = true;
             }
@@ -504,7 +592,7 @@ class DietController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo.addPdfFileRepo(accessToken: sharedPreferences.getString(Constants.accessToken) ?? "", map: {
           "image": addDietPdfFil!.path,
@@ -537,7 +625,7 @@ class DietController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo.bookAppointment(accessToken: sharedPreferences.getString(Constants.accessToken) ?? "", map: {
           "date": date.toIso8601String(),
@@ -550,6 +638,24 @@ class DietController extends GetxController implements GetxService {
 
           if (response.statusCode == 200) {
             ApiResponse model = ApiResponse.fromJson(response.body, (p0) {});
+            // Health form first (server FORM_REQUIRED): open the form, and
+            // book right after she finishes it.
+            final bodyMap = response.body is Map ? response.body as Map : const {};
+            final dataMap = bodyMap['data'] is Map ? bodyMap['data'] as Map : const {};
+            final code = dataMap['code'];
+            if (model.status == "0" && code == 'FORM_REQUIRED') {
+              await PreConsultationFormScreen.open(
+                  planType: '${dataMap['planType'] ?? 'diet'}', canLater: true);
+              final req = Get.isRegistered<ConsultationController>()
+                  ? await Get.find<ConsultationController>().getPreConsultRequirements('diet')
+                  : null;
+              if (req != null && req['shouldShow'] != true) {
+                bookAppointment(planId, dietId, date);
+              } else {
+                CustomToast.failToast(msg: model.message);
+              }
+              return;
+            }
             if (model.status == "0") {
               CustomToast.failToast(msg: model.message);
             }
@@ -582,7 +688,7 @@ class DietController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo
             .addCalorieImage(
@@ -662,7 +768,7 @@ class DietController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         print('DietController.updateAppointmentStatus ${status}');
         await homeRepo
             .updateAppointment(accessToken: sharedPreferences.getString(Constants.accessToken) ?? "", map: {"status": status}, id: id.toString())
@@ -707,7 +813,7 @@ class DietController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         await homeRepo
             .deleteAppointment(accessToken: sharedPreferences.getString(Constants.accessToken) ?? "", id: id.toString())
             .then((response) async {
@@ -741,7 +847,7 @@ class DietController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         var list = [];
         if (daySlotsOfDietModel != null) {
           // Send the "h:mm AM/PM" text as-is — do NOT run it through

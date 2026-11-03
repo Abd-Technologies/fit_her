@@ -91,6 +91,7 @@
 import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 
 class AppWebView extends StatefulWidget {
@@ -188,7 +189,7 @@ class _AppWebViewState extends State<AppWebView> {
           ),
           if (_isLoading)
             const Center(
-              child: CircularProgressIndicator(),
+              child: FhLoader(),
             ),
         ],
       ),

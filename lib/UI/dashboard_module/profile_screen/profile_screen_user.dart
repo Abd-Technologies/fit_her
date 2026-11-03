@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 import 'package:fitness_zone_2/UI/auth_module/result_screen.dart' show openWhatsAppChat;
 import 'package:fitness_zone_2/UI/auth_module/sign_up_screen/goal_screen.dart';
 import 'package:fitness_zone_2/UI/auth_module/sign_up_screen/sign_up_screen_questions.dart';
-import 'package:fitness_zone_2/UI/auth_module/cycle_settings_screen.dart';
+import 'package:fitness_zone_2/UI/auth_module/log_period_screen.dart';
 import 'package:fitness_zone_2/data/controllers/auth_controller/auth_controller.dart';
 import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.dart';
 import 'package:fitness_zone_2/data/controllers/motivation_controller/motivation_controller.dart';
@@ -89,6 +90,25 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
     _fetchAttendanceStats();
   }
 
+  Future<void> _refreshAll() async {
+    if (Get.isRegistered<HomeController>()) {
+      final hc = Get.find<HomeController>();
+      // Flip the flag so the cards' Obx rebuilds when fresh data lands
+      // (it goes back to true once the reply is read).
+      hc.userHomeLoad.value = false;
+      hc.getUserHomeFunc(forceRefresh: true);
+      // If the reload fails (no internet), don't leave it stuck on "loading".
+      Future.delayed(const Duration(seconds: 10), () {
+        if (!hc.userHomeLoad.value) hc.userHomeLoad.value = true;
+      });
+    }
+    _fetchAttendanceStats();
+    if (mounted) {
+      setState(() => _phaseFuture = _fetchCyclePhase());
+    }
+    await _fetchFreezeStatus();
+  }
+
   void _fetchAttendanceStats() {
     try {
       final mc = Get.isRegistered<MotivationController>()
@@ -128,7 +148,21 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
   // Unpaid (status == false) users see a stripped-down profile: no stats,
   // no subscription card, no attendance — just identity + an "Explore
   // plans" CTA + the menu. They have nothing to show on those surfaces yet.
-  bool get _isPaid => authController.logInUser?.status == true;
+  //
+  // A free-trial user also has status == true and one hidden system plan
+  // ("System — Trial Auto Diet Plan"), so status alone isn't enough: she
+  // counts as paid only once she has a real package with days left.
+  bool get _isPaid {
+    if (authController.logInUser?.status != true) return false;
+    final plans = Get.isRegistered<HomeController>()
+        ? Get.find<HomeController>().userHomeData?.userAllPlans
+        : null;
+    if (plans == null) return true; // not loaded yet: keep old behaviour
+    return plans.any((p) {
+      final t = p.title.trim().toLowerCase();
+      return t != 'free trial' && !t.startsWith('system') && p.remainingDays > 0;
+    });
+  }
 
   // ─── API-touching helpers (UNCHANGED — do not modify) ──────────────────
 
@@ -231,7 +265,11 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
     final textTheme = Theme.of(context).textTheme;
     return Scaffold(
       backgroundColor: _kCanvas,
-      body: SingleChildScrollView(
+      body: RefreshIndicator(
+        // Pull down to reload her plan, stats, attendance and cycle.
+        onRefresh: _refreshAll,
+        color: const Color(0xFF6DC55A),
+        child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: EdgeInsets.zero,
         child: Column(
@@ -268,10 +306,16 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
                         _statsCard(),
                         const SizedBox(height: 16),
                         _subscriptionCard(),
-                        const SizedBox(height: 16),
-                        _attendanceCard(),
-                      ] else
+                        // Attendance card removed from Profile (Oct 2026).
+                      ] else ...[
+                        // Free trial (running or ended, not paid): her trial
+                        // stats in the same card as paid users (Oct 2026).
+                        if (_showTrialStats) ...[
+                          _trialStatsCard(),
+                          const SizedBox(height: 16),
+                        ],
                         _explorePlansCard(),
+                      ],
                       const SizedBox(height: 16),
                       _menuCard(context, textTheme),
                       const SizedBox(height: 12),
@@ -286,6 +330,7 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -544,7 +589,7 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
           return const SizedBox(height: 30);
         }
         if (snap.data == null) {
-          // No cycle data yet — tap navigates to CycleSettingsScreen to add it.
+          // No cycle data yet — tap opens LogPeriodScreen to add it.
           return _chip(
             text: 'Add cycle data',
             icon: Icons.add_circle_outline,
@@ -564,7 +609,7 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
   }
 
   Future<void> _openCycleSettings() async {
-    await Get.to(() => const CycleSettingsScreen());
+    await Get.to(() => const LogPeriodScreen());
     if (mounted) {
       setState(() {
         _phaseFuture = _fetchCyclePhase();
@@ -624,7 +669,8 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
 
     final classesStr = stats != null ? '${stats.daysAttendedLast30}' : '—';
     final streakStr = stats != null ? '${stats.streak} 🔥' : '— 🔥';
-    final workoutsStr = stats != null ? '${stats.daysAttendedLast30}' : '—';
+    // Was the same number as Classes (both last 30 days). Now: last 7 days.
+    final workoutsStr = stats != null ? '${stats.daysAttendedLast7}' : '—';
 
     return _card(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
@@ -643,10 +689,116 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
           Expanded(
             child: _statColumn(
               value: workoutsStr,
-              label: 'Workouts',
+              label: 'Last 7 days',
               valueColor: _kAccent,
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  // ─── Trial stats (same card as paid) ───────────────────────────────────
+  bool get _showTrialStats {
+    if (!Get.isRegistered<HomeController>()) return false;
+    final h = Get.find<HomeController>();
+    return h.trialLive.value || h.trialEndedUnpaid;
+  }
+
+  Widget _trialStatsCard() {
+    final h = Get.find<HomeController>();
+    final mc = Get.isRegistered<MotivationController>()
+        ? Get.find<MotivationController>()
+        : null;
+    final stats = mc?.motivationStats.value;
+    final live = h.trialLive.value;
+    final done = h.classesAttended.value;
+    final goal = h.classGoal.value;
+    final total = h.trialDays.value;
+
+    String dayStr = 'Ended';
+    if (live) {
+      final start = h.trialStartedAt.value;
+      final n = start == null
+          ? 1
+          : (DateTime.now().difference(start).inHours ~/ 24) + 1;
+      dayStr = 'Day ${n.clamp(1, total)} of $total';
+    }
+    final streakStr = stats != null ? '${stats.streak} 🔥' : '— 🔥';
+
+    final String note;
+    if (!live) {
+      note = 'Pick a plan below to keep your streak going 🔥';
+    } else if (done == 0) {
+      note = 'Join your first class to start 💪';
+    } else if (done < goal) {
+      final left = goal - done;
+      note = '$left more class${left == 1 ? '' : 'es'} to complete your trial';
+    } else {
+      note = 'Trial goal done! Keep your streak going 💚';
+    }
+
+    return _card(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Expanded(child: _statColumn(value: '$done of $goal', label: 'Classes')),
+              _statDivider(),
+              Expanded(
+                child: _statColumn(
+                  value: streakStr,
+                  label: 'Streak',
+                  valueColor: _kStreak,
+                ),
+              ),
+              _statDivider(),
+              Expanded(
+                child: _statColumn(
+                  value: dayStr,
+                  label: 'Free trial',
+                  valueColor: _kAccent,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            note,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 11.5,
+              fontWeight: FontWeight.w500,
+              color: _kSage,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Small box in the Pause sheet: a title and 2 short lines.
+  Widget _pauseInfo(String title, List<(String, String)> lines, Color bg) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: const TextStyle(
+                  fontFamily: 'Poppins', fontSize: 12, fontWeight: FontWeight.w700, color: _kTextPrimary)),
+          const SizedBox(height: 4),
+          for (final l in lines)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text('${l.$1}  ${l.$2}',
+                  style: const TextStyle(fontFamily: 'Poppins', fontSize: 12.5, color: _kTextPrimary, height: 1.35)),
+            ),
         ],
       ),
     );
@@ -660,13 +812,18 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          value,
-          style: TextStyle(
-            fontFamily: 'Poppins',
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-            color: valueColor ?? _kTextPrimary,
+        // Shrinks only when it doesn't fit (e.g. "Day 2 of 3").
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            value,
+            maxLines: 1,
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: valueColor ?? _kTextPrimary,
+            ),
           ),
         ),
         const SizedBox(height: 4),
@@ -734,7 +891,8 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
           ),
           const SizedBox(height: 6),
           Text(
-            trialActive ? '3-Day Free Trial' : 'Explore plans',
+            // Trial length from the server (admin setting), not a fixed 3.
+            trialActive ? '${home?.trialDays.value ?? 3}-Day Free Trial' : 'Explore plans',
             style: const TextStyle(
               fontFamily: 'Poppins',
               fontSize: 20,
@@ -805,8 +963,29 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
         ? Get.find<HomeController>()
         : null;
     final plans = homeController?.userHomeData?.userAllPlans ?? const [];
-    final plan = plans.isNotEmpty ? plans.first : null;
-    final planName = plan?.title ?? 'FitHer Plus';
+    // Show her real, current package: skip the free trial and anything
+    // already used up, prefer the one with the most days left. Never a
+    // made-up name: "FitHer Plus" used to show whenever the list was
+    // empty or not loaded yet.
+    final live = plans
+        .where((p) =>
+            p.title.trim().toLowerCase() != 'free trial' &&
+            // Hidden system row the server makes for every free-trial
+            // user ("System — Trial Auto Diet Plan", 90 days). It only
+            // holds the trial diet plan; never show it as her package.
+            !p.title.trim().toLowerCase().startsWith('system') &&
+            p.remainingDays > 0)
+        .toList()
+      ..sort((a, b) => b.remainingDays.compareTo(a.remainingDays));
+    final real = plans
+        .where((p) => !p.title.trim().toLowerCase().startsWith('system'))
+        .toList();
+    final plan = live.isNotEmpty
+        ? live.first
+        : (real.isNotEmpty ? real.first : null);
+    final planName = (plan?.title.trim().isNotEmpty ?? false)
+        ? plan!.title.trim()
+        : 'Your plan';
     // Some users have priceData populated, others only the flat `price`
     // field (string). Fall through both before giving up — was showing
     // "—" for users with `plan.price = "3500"` and null priceData.
@@ -1402,7 +1581,6 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
     _freezeSelectedDays = 7;
     _freezeCustomSelected = false;
     _freezeBusy = false;
-    final customController = TextEditingController();
 
     showModalBottomSheet<void>(
       context: context,
@@ -1413,89 +1591,97 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
           builder: (innerCtx, setSheetState) {
             final cap = (_freezeStatus?['maxFreezeDaysNow'] as num?)?.toInt();
             final blocked = cap != null && cap <= 0;
-            final presets =
-                const [7, 14, 30].where((d) => cap == null || d <= cap).toList();
+            // Oct 2026: one slider from 1 day up to her limit (was
+            // 7 / 14 / Custom + a number box).
+            final maxDays = (cap == null || cap < 1) ? 30 : cap;
+            if (_freezeSelectedDays > maxDays) _freezeSelectedDays = maxDays;
+            if (_freezeSelectedDays < 1) _freezeSelectedDays = 1;
 
-            int? resolvedDays() {
-              if (_freezeCustomSelected) {
-                return int.tryParse(customController.text.trim());
-              }
-              return _freezeSelectedDays;
-            }
+            int? resolvedDays() => _freezeSelectedDays;
 
-            Widget dayChip(int days) {
-              final selected =
-                  !_freezeCustomSelected && days == _freezeSelectedDays;
-              return Expanded(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _freezeBusy
-                      ? null
-                      : () => setSheetState(() {
-                            _freezeCustomSelected = false;
-                            _freezeSelectedDays = days;
-                          }),
-                  child: Container(
-                    height: 56,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: selected ? _kHeroDark : Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: selected ? _kHeroDark : _kCardBorder,
-                        width: 1,
-                      ),
-                    ),
-                    child: Text(
-                      '$days days',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: selected ? Colors.white : _kTextPrimary,
-                      ),
-                    ),
-                  ),
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+            final back = DateTime.now().add(Duration(days: _freezeSelectedDays));
+            final backText = '${wd[back.weekday - 1]} ${back.day} ${months[back.month - 1]}';
+
+            Widget daySlider() {
+              final d = _freezeSelectedDays;
+              return Container(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF7FBF5),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: _kCardBorder),
                 ),
-              );
-            }
-
-            Widget customChip() {
-              return Expanded(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _freezeBusy
-                      ? null
-                      : () => setSheetState(() {
-                            _freezeCustomSelected = true;
-                            if (customController.text.trim().isEmpty) {
-                              customController.text =
-                                  (cap ?? _freezeSelectedDays).toString();
-                            }
-                          }),
-                  child: Container(
-                    height: 56,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: _freezeCustomSelected ? _kHeroDark : Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color:
-                            _freezeCustomSelected ? _kHeroDark : _kCardBorder,
-                        width: 1,
-                      ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text('$d',
+                            style: const TextStyle(
+                                fontFamily: 'Poppins', fontSize: 30, fontWeight: FontWeight.w800,
+                                color: _kTextPrimary, height: 1.0)),
+                        const SizedBox(width: 6),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 3),
+                          child: Text(d == 1 ? 'day' : 'days',
+                              style: const TextStyle(
+                                  fontFamily: 'Poppins', fontSize: 14, fontWeight: FontWeight.w600,
+                                  color: _kTextPrimary)),
+                        ),
+                        const Spacer(),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 3),
+                          child: Text('Back on $backText',
+                              style: const TextStyle(
+                                  fontFamily: 'Poppins', fontSize: 12.5, fontWeight: FontWeight.w600,
+                                  color: _kAccent)),
+                        ),
+                      ],
                     ),
-                    child: Text(
-                      'Custom',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color:
-                            _freezeCustomSelected ? Colors.white : _kTextPrimary,
+                    if (maxDays > 1) ...[
+                      const SizedBox(height: 4),
+                      SliderTheme(
+                        data: SliderTheme.of(innerCtx).copyWith(
+                          trackHeight: 6,
+                          activeTrackColor: _kAccent,
+                          inactiveTrackColor: const Color(0xFFDCE8D6),
+                          thumbColor: _kHeroDark,
+                          overlayColor: _kAccent.withOpacity(0.15),
+                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 11),
+                          tickMarkShape: SliderTickMarkShape.noTickMark,
+                          showValueIndicator: ShowValueIndicator.never,
+                        ),
+                        child: Slider(
+                          min: 1,
+                          max: maxDays.toDouble(),
+                          divisions: maxDays - 1,
+                          value: d.toDouble(),
+                          onChanged: _freezeBusy
+                              ? null
+                              : (v) {
+                                  final n = v.round();
+                                  if (n != _freezeSelectedDays) HapticFeedback.selectionClick();
+                                  setSheetState(() => _freezeSelectedDays = n);
+                                },
+                        ),
                       ),
-                    ),
-                  ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('1 day',
+                                style: TextStyle(fontFamily: 'Poppins', fontSize: 11, color: _kSage)),
+                            Text('$maxDays days · your limit',
+                                style: const TextStyle(fontFamily: 'Poppins', fontSize: 11, color: _kSage)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               );
             }
@@ -1516,7 +1702,8 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
                   topRight: Radius.circular(24),
                 ),
               ),
-              child: Column(
+              child: SingleChildScrollView(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -1541,22 +1728,44 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
                       ),
                     ),
                     const SizedBox(height: 6),
+                    // Plain words (Oct 2026): what stops, what keeps
+                    // working, and that her days aren't lost.
                     Text(
                       cap != null
-                          ? 'Your plan resumes automatically after the selected '
-                              'pause window. You can pause for up to $cap '
-                              "day(s) right now. You can unfreeze anytime "
-                              "before then — any days you don't end up using "
-                              "are added back onto your plan's end date "
-                              'automatically.'
-                          : 'Your plan resumes automatically after the selected '
-                              'pause window. Subject to your remaining freeze '
-                              "budget. You can unfreeze anytime before then — "
-                              "any days you don't end up using are added back "
-                              "onto your plan's end date automatically.",
+                          ? "Your days are saved, not lost. You can pause up to $cap days."
+                          : "Your days are saved, not lost.",
                       style: const TextStyle(
                         fontFamily: 'Poppins',
                         fontSize: 13,
+                        color: _kSage,
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _pauseInfo(
+                      'While paused',
+                      const [
+                        ('🧘', 'No live classes or class reminders'),
+                        ('🩺', 'No booking or moving a dietitian call'),
+                      ],
+                      const Color(0xFFFFF5E9),
+                    ),
+                    const SizedBox(height: 8),
+                    _pauseInfo(
+                      'Still works',
+                      const [
+                        ('🥗', 'Logging your meals, water and sleep'),
+                        ('🌸', 'Your cycle and daily insights'),
+                      ],
+                      const Color(0xFFF2F9EE),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'It starts again by itself after the days you pick, or tap '
+                      'Unfreeze any time. Unused days go back on your plan.',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 12,
                         color: _kSage,
                         height: 1.45,
                       ),
@@ -1580,49 +1789,8 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
                           ),
                         ),
                       )
-                    else ...[
-                      Row(
-                        children: [
-                          for (int i = 0; i < presets.length; i++) ...[
-                            dayChip(presets[i]),
-                            const SizedBox(width: 8),
-                          ],
-                          customChip(),
-                        ],
-                      ),
-                      if (_freezeCustomSelected) ...[
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: customController,
-                          keyboardType: TextInputType.number,
-                          onChanged: (_) => setSheetState(() {}),
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 14,
-                            color: _kTextPrimary,
-                          ),
-                          decoration: InputDecoration(
-                            hintText:
-                                cap != null ? 'Up to $cap days' : 'Number of days',
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 12),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              borderSide: const BorderSide(color: _kCardBorder),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              borderSide: const BorderSide(color: _kCardBorder),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              borderSide: const BorderSide(color: _kHeroDark),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+                    else
+                      daySlider(),
                     const SizedBox(height: 18),
                     GestureDetector(
                       behavior: HitTestBehavior.opaque,
@@ -1636,8 +1804,8 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
                                 Get.snackbar(
                                   'Invalid',
                                   cap != null
-                                      ? 'Enter a number between 1 and $cap.'
-                                      : 'Enter a number of days.',
+                                      ? 'Pick between 1 and $cap days.'
+                                      : 'Pick how many days.',
                                   snackPosition: SnackPosition.BOTTOM,
                                 );
                                 return;
@@ -1676,7 +1844,7 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
                               ? 'Pausing…'
                               : (blocked
                                   ? 'Pause plan'
-                                  : 'Pause for ${resolvedDays() ?? _freezeSelectedDays} days'),
+                                  : 'Pause for $_freezeSelectedDays ${_freezeSelectedDays == 1 ? 'day' : 'days'}'),
                           style: const TextStyle(
                             fontFamily: 'Poppins',
                             fontSize: 14,
@@ -1713,6 +1881,7 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
                       ),
                     ),
                   ],
+                ),
                 ),
               );
           },
@@ -2015,22 +2184,7 @@ class _ProfileScreenUserState extends State<ProfileScreenUser> {
             ),
           ),
         ),
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _showDeleteDialog,
-          child: const Padding(
-            padding: EdgeInsets.only(top: 4, bottom: 10),
-            child: Text(
-              'Delete account',
-              style: TextStyle(
-                fontFamily: 'Poppins',
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: _kSage,
-              ),
-            ),
-          ),
-        ),
+        // "Delete account" moved to Personal details (Oct 2026).
       ],
     );
   }

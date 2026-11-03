@@ -21,6 +21,7 @@ import '../../models/free_trial_user_details.dart';
 import '../../models/get_user_plan/get_user_plan.dart';
 import '../auth_controller/auth_controller.dart';
 import '../../../helper/analytics_helper.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class WorkOutController extends GetxController implements GetxService {
   SharedPreferences sharedPreferences;
@@ -213,37 +214,36 @@ class WorkOutController extends GetxController implements GetxService {
     }
   }
 
-  getTrainerHomeFunc() {
-    trainerHomeLoad.value = false;
-    connectionService.checkConnection().then((value) async {
-      if (!value) {
-        CustomToast.noInternetToast();
-      } else {
-        // Get.dialog(const Center(child: CircularProgressIndicator()),
-        //     barrierDismissible: false);
-
-        homeRepo
-            .getTrainerHome(
-          accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
-          userId: sharedPreferences.getString(Constants.userId) ?? "",
-        )
-            .then((response) async {
-          // Get.back();
-          if (response.body["status"] == "0") {
-            CustomToast.failToast(msg: response.body["message"]);
-          } else if (response.body["status"] != "0") {
-            ApiResponse<GetUserWorkoutPlanDetails> model = ApiResponse.fromJson(
-                response.body, GetUserWorkoutPlanDetails.fromJson);
-            if (model.status == "1") {
-              getTrainerHome = model.data!;
-
-              trainerHomeLoad.value = true;
-              update();
-            }
-          }
-        });
+  /// Trainer home (her week of classes). [silent]: pull-to-refresh keeps
+  /// the list on screen while it reloads instead of showing a spinner.
+  Future<void> getTrainerHomeFunc({bool silent = false}) async {
+    if (!silent || getTrainerHome == null) trainerHomeLoad.value = false;
+    final online = await connectionService.checkConnection();
+    if (!online) {
+      CustomToast.noInternetToast();
+      return;
+    }
+    try {
+      final response = await homeRepo.getTrainerHome(
+        accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
+        userId: sharedPreferences.getString(Constants.userId) ?? "",
+      );
+      if (response.body["status"] == "0") {
+        CustomToast.failToast(msg: response.body["message"]);
+      } else if (response.body["status"] != "0") {
+        ApiResponse<GetUserWorkoutPlanDetails> model = ApiResponse.fromJson(
+            response.body, GetUserWorkoutPlanDetails.fromJson);
+        if (model.status == "1") {
+          getTrainerHome = model.data!;
+          trainerHomeLoad.value = true;
+          update();
+        }
       }
-    });
+    } catch (_) {
+      CustomToast.failToast(msg: "Couldn't refresh. Please try again.");
+    }
+    // Keep the old list visible if the refresh failed.
+    if (getTrainerHome != null) trainerHomeLoad.value = true;
   }
 
   addTrainerSlots() {
@@ -252,7 +252,7 @@ class WorkOutController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()),
+        Get.dialog(const Center(child: FhLoader()),
             barrierDismissible: false);
 
         addPackageTimeTable.removeWhere((time) {
@@ -407,7 +407,7 @@ class WorkOutController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()),
+        Get.dialog(const Center(child: FhLoader()),
             barrierDismissible: false);
 
         await homeRepo.addClassDetails(
@@ -449,7 +449,7 @@ class WorkOutController extends GetxController implements GetxService {
       return;
     }
 
-    Get.dialog(const Center(child: CircularProgressIndicator()),
+    Get.dialog(const Center(child: FhLoader()),
         barrierDismissible: false);
 
     final response = await homeRepo.addFreeTrialUserData(

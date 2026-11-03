@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class SpoonacularFoodAnalyzer extends StatefulWidget {
   @override
@@ -100,7 +101,7 @@ class _SpoonacularFoodAnalyzerState extends State<SpoonacularFoodAnalyzer> {
             else
               Container(height: 200, color: Colors.grey[200], child: Icon(Icons.image, size: 100)),
             SizedBox(height: 20),
-            if (_loading) CircularProgressIndicator(),
+            if (_loading) FhLoader(),
             if (_result != null)
               Text(_result!, textAlign: TextAlign.center, style: TextStyle(fontSize: 16)),
             Spacer(),

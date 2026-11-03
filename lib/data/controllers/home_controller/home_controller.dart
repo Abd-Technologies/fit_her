@@ -1,3 +1,6 @@
+import 'package:fitness_zone_2/helper/popup_manager.dart';
+import 'package:fitness_zone_2/helper/class_join_memory.dart';
+import 'package:fitness_zone_2/widgets/class_feedback/class_feedback_card.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -37,7 +40,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../UI/auth_module/sign_up_screen/goal_screen.dart';
 import '../../../UI/auth_module/sign_up_screen/sign_up_screen_questions.dart';
 import '../../../helper/analytics_helper.dart';
+import '../../../helper/signup_progress.dart';
 import '../../../values/constants.dart';
+import '../../Repos/plan_freeze_repo/plan_freeze_repository.dart';
 import '../../../widgets/toasts.dart';
 import '../../GetServices/CheckConnectionService.dart';
 import '../../Repos/home_repo/home_repo.dart';
@@ -49,6 +54,7 @@ import '../../models/get_all_users/get_all_users.dart';
 import '../../models/get_all_users/get_all_users_based_on_type.dart';
 import '../../models/get_trainer_home/get_trainer_home.dart';
 import '../../models/home_model/home_model.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class HomeController extends GetxController implements GetxService {
   SharedPreferences sharedPreferences;
@@ -62,6 +68,7 @@ class HomeController extends GetxController implements GetxService {
   void onInit() {
     initUpcomingSlot();
     _restoreTrialRx();
+    trialPlanPending.value = sharedPreferences.getBool(kTrialPlanPendingKey) ?? false;
     dietOfUserByDiet = [
       getDietOfUser("Monday"),
       getDietOfUser("Tuesday"),
@@ -84,6 +91,24 @@ class HomeController extends GetxController implements GetxService {
   }
 
   bool get isFrozen => (userHomeData?.freeze.value == 1);
+
+  // Plan paused by her (freeze v2, UserPlan.frozenAt), from
+  // GET plan-freeze status. One app-wide flag (Oct 2026): while paused
+  // she only logs and sees insights; no classes, no consultations.
+  // Set by PaidHero / PlanFrozenBanner when they load the status.
+  final RxBool planFrozen = false.obs;
+
+  Future<void> refreshPlanFrozen() async {
+    try {
+      final token = sharedPreferences.getString(Constants.accessToken) ?? '';
+      if (token.isEmpty) return;
+      final res = await Get.find<PlanFreezeRepository>().getStatus(accessToken: token);
+      final b = res.body;
+      if (b is Map && b['status'] == '1' && b['data'] is Map) {
+        planFrozen.value = b['data']['isFrozen'] == true;
+      }
+    } catch (_) {}
+  }
 
   /// True if user has at least one active plan (remaining days > 0). Used to restrict posts/messages.
   bool get hasActivePackage =>
@@ -205,6 +230,10 @@ class HomeController extends GetxController implements GetxService {
   var getPlanImagesLoad = false.obs;
   var getTeamMembersLoad = false.obs;
   var trialLoad = false.obs;
+  /// Nov 2026: true once her trial status was checked this session. Until
+  /// then Home doesn't decide "unpaid" for a woman whose trial may be
+  /// running (after logout + login she briefly saw the plans home).
+  final RxBool trialChecked = false.obs;
   var trialActionLoad = false.obs;
   Map<String, dynamic>? trialJourney;
 
@@ -220,15 +249,48 @@ class HomeController extends GetxController implements GetxService {
   final RxInt trialDays = 3.obs;
   Duration get kTrialLength => Duration(days: trialDays.value);
 
+  /// Free-trial user right now: an unconverted 3-day trial that hasn't
+  /// ended, or a "Free Trial" plan. Same rule as the class Join button
+  /// (HelpingWidgets._isFreeTrialUser). Used by analytics.
+  RxBool get isFreeTrialUser {
+    final j = trialJourney;
+    var activeTrial = false;
+    if (j != null && j['convertedAt'] == null) {
+      final started = DateTime.tryParse(j['startedAt']?.toString() ?? '');
+      activeTrial =
+          started != null && DateTime.now().isBefore(started.add(kTrialLength));
+    }
+    final freePlan = userHomeData?.userAllPlans.any(
+          (p) => p.title.trim().toLowerCase() == 'free trial',
+        ) ??
+        false;
+    return (activeTrial || freePlan).obs;
+  }
+
   /// From the backend (TRIAL_JOIN_WINDOW_MINUTES / TRIAL_CLASS_GOAL).
   final RxInt joinWindowMinutes = 10.obs;
-  final RxInt classGoal = 3.obs;
+  // Placeholder until the server sends the real goal (half the trial days,
+  // rounded up; 2 for a 3-day trial).
+  final RxInt classGoal = 2.obs;
   final RxInt classesAttended = 0.obs;
   final RxInt attendanceMinutes = 10.obs;
 
   /// Last loaded class schedule (GET /trial/classes), shared by the home
   /// "next class" card, the trial screen and the late-join message.
   final Rxn<Map<String, dynamic>> trialClassData = Rxn<Map<String, dynamic>>();
+
+  DateTime? _trialClassesLoadedAt;
+
+  /// Home refresh (Nov 2026): reload the trial class list at most every
+  /// 2 minutes while her trial runs, so the free-trial box sees a changed
+  /// time, a cancelled class or a finished class (it used to load once).
+  Future<void> refreshTrialClassesIfStale() async {
+    if (!trialLive.value) return;
+    final at = _trialClassesLoadedAt;
+    if (at != null && DateTime.now().difference(at) < const Duration(minutes: 2)) return;
+    _trialClassesLoadedAt = DateTime.now();
+    await loadTrialClasses();
+  }
 
   /// Live class schedule for the trial class picker. Null on failure.
   Future<Map<String, dynamic>?> loadTrialClasses() async {
@@ -247,12 +309,15 @@ class HomeController extends GetxController implements GetxService {
   }
 
   /// "My trial" summary + offer (GET /trial/summary). Null on failure.
-  Future<Map<String, dynamic>?> loadTrialSummary() async {
+  /// [peek]: read only (home recap card); the offer countdown starts
+  /// when she opens the summary itself.
+  Future<Map<String, dynamic>?> loadTrialSummary({bool peek = false}) async {
     try {
       final country = await getCountryCode();
       final res = await homeRepo.getTrialSummary(
         accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
         country: country,
+        peek: peek,
       );
       final body = res.body;
       if (body is Map && body['status'] == '1' && body['data'] is Map) {
@@ -288,25 +353,61 @@ class HomeController extends GetxController implements GetxService {
       }
     }
 
+    // The list holds the whole week; each class runs on one weekday
+    // ("dayLocal" in her time zone, else "day"). Only classes that run on
+    // [day]'s weekday count (classes without a weekday are kept).
+    bool runsOn(Map<String, dynamic> c, DateTime day) {
+      final wd = '${c['dayLocal'] ?? c['day'] ?? ''}'.trim().toLowerCase();
+      if (wd.isEmpty || wd == 'null') return true;
+      return wd == DateFormat('EEEE').format(day).toLowerCase();
+    }
+
+    // Free trial (Nov 2026, same rule as the home class card and the
+    // server): a class can be joined in its first [window] minutes. After
+    // that, if she didn't join, show her next class. If she joined, keep
+    // it until it ends (she can rejoin). Skip a class cancelled today, or
+    // one that already finished.
+    bool stillOnForHer(Map<String, dynamic> c, DateTime when, DateTime day) {
+      final st = '${c['status'] ?? ''}'.trim().toLowerCase();
+      if (st == 'cancelled') return false;
+      if (st == 'completed' && !now.isBefore(when)) return false;
+      if (now.isBefore(when.add(window))) return true;
+      if (ClassJoinMemory.joinedToday(c['slotId'])) {
+        try {
+          final t = DateFormat('hh:mm a').parse('${c['endLocal']}');
+          final end = DateTime(day.year, day.month, day.day, t.hour, t.minute);
+          return now.isBefore(end);
+        } catch (_) {
+          return false;
+        }
+      }
+      return false;
+    }
+
     ({Map<String, dynamic> data, DateTime when})? firstFrom(
         List<Map<String, dynamic>> list, DateTime day, bool todayOnly) {
       final items = list
+          .where((c) => runsOn(c, day))
           .map((c) => (data: c, when: at(c, day)))
           .where((x) => x.when != null)
           .map((x) => (data: x.data, when: x.when!))
-          .where((x) => !todayOnly || now.isBefore(x.when.add(window)))
+          .where((x) => !todayOnly || stillOnForHer(x.data, x.when, day))
           .toList()
         ..sort((a, b) => a.when.compareTo(b.when));
       return items.isEmpty ? null : items.first;
     }
 
     final tomorrow = now.add(const Duration(days: 1));
-    final hit = firstFrom(picked, now, true) ??
-        (pickedOnly ? null : firstFrom(all, now, true));
+    // Today: the soonest class she can still join (same one the home's
+    // big class card shows). Picked-only screens use her picks.
+    final hit = pickedOnly ? firstFrom(picked, now, true) : firstFrom(all, now, true);
     if (hit != null) {
       return (
         data: hit.data,
-        label: 'Today ${DateFormat('h:mm a').format(hit.when)}',
+        // Already started (inside her join window, or she joined): "Live now".
+        label: now.isBefore(hit.when)
+            ? 'Today ${DateFormat('h:mm a').format(hit.when)}'
+            : 'Live now',
         today: true,
       );
     }
@@ -355,11 +456,24 @@ class HomeController extends GetxController implements GetxService {
     final last = sharedPreferences.getInt(_kCelebratedKey) ?? 0;
     if (done <= last) return;
     sharedPreferences.setInt(_kCelebratedKey, done);
-    Future.delayed(const Duration(milliseconds: 700), () {
-      Get.to(() => TrialClassCelebrationScreen(
-            attended: done,
-            goal: classGoal.value,
-          ));
+    // Through the pop-up manager (Oct 2026): waits for any open pop-up to
+    // close, then shows, and uses up this open's turn so no planned
+    // pop-up lands right after it. It used to open by itself, sometimes
+    // on top of another pop-up.
+    // Nov 2026: the after-class "well done" sheet (class_feedback_card.dart)
+    // celebrates with her trial progress. Only when there's no sheet to
+    // show for this class (rating paused, for example) the old full-screen
+    // celebration still opens, so a counted class is always celebrated once.
+    Future.delayed(const Duration(seconds: 5), () async {
+      final fb = ClassFeedbackController.ensure();
+      await fb.refreshPending(force: true);
+      if (fb.pending.value != null) return;
+      PopupManager.runNow('trial_class_celebration', () async {
+        await Get.to(() => TrialClassCelebrationScreen(
+              attended: done,
+              goal: classGoal.value,
+            ));
+      });
     });
   }
   final Rxn<DateTime> trialStartedAt = Rxn<DateTime>();
@@ -367,6 +481,28 @@ class HomeController extends GetxController implements GetxService {
   Timer? _trialEndTimer;
 
   DateTime? get trialEndsAt => trialStartedAt.value?.add(kTrialLength);
+
+  /// Her free trial is over and she hasn't bought a plan. Classes then lead
+  /// to "Continue with a plan" instead of Join. Reactive (reads trialLive).
+  bool get trialEndedUnpaid {
+    final running = trialLive.value;
+    final j = trialJourney;
+    if (j == null || running || j['convertedAt'] != null) return false;
+    // A real package wins. (user.status alone isn't enough: it can stay
+    // true after a trial ends, which is why she kept the paid home.)
+    return hasRealPlan == false; // unknown (not loaded) = don't block
+  }
+
+  /// Has a real package (not the free trial / system trial plan) with days
+  /// left. null = plans not loaded yet. Same rule as Profile "Your plan".
+  bool? get hasRealPlan {
+    final plans = userHomeData?.userAllPlans;
+    if (plans == null) return null;
+    return plans.any((p) {
+      final t = p.title.trim().toLowerCase();
+      return t != 'free trial' && !t.startsWith('system') && p.remainingDays > 0;
+    });
+  }
 
   void _syncTrialRx() {
     final j = trialJourney;
@@ -426,6 +562,23 @@ class HomeController extends GetxController implements GetxService {
 
   // Trial-to-Plan funnel — quick-intake submit state.
   var trialQuickIntakeLoad = false.obs;
+  // Oct 2026: the AI took longer than 6 s, so the server said "Your plan
+  // will be shared soon" and is still making it. A push
+  // ("trialPlanReady") arrives when it's ready. Saved on the phone so the
+  // Diet tab still says "being prepared" after an app restart.
+  final RxBool trialPlanPending = false.obs;
+  static const String kTrialPlanPendingKey = 'trial_plan_pending';
+
+  void setTrialPlanPending(bool v) {
+    trialPlanPending.value = v;
+    try {
+      if (v) {
+        sharedPreferences.setBool(kTrialPlanPendingKey, true);
+      } else {
+        sharedPreferences.remove(kTrialPlanPendingKey);
+      }
+    } catch (_) {}
+  }
 
   ///testimonials pic
   XFile? testiPicture;
@@ -510,9 +663,21 @@ class HomeController extends GetxController implements GetxService {
 
   getUsersBasedOnUserType(String userType, {bool addNull = false}) {
     getUsersBasedOnUserTypeLoad.value = false;
+
+    // Every failure path must release the loading flag, otherwise screens
+    // that wait on it (e.g. the home "Diet"/"Psychiatrist" tiles ->
+    // DietScreen) spin forever. Screens read the model with `!` once the
+    // flag is true, so fall back to an empty list (they show their own
+    // "nothing to show" state) rather than leaving it null.
+    void releaseOnFailure() {
+      getUsersBasedOnUserTypeModel ??= GetUsersBasedOnUserType(users: []);
+      getUsersBasedOnUserTypeLoad.value = true;
+    }
+
     connectionService.checkConnection().then((value) async {
       if (!value) {
         CustomToast.noInternetToast();
+        releaseOnFailure();
       } else {
         homeRepo
             .getSubUserBasedOnUserTypes(
@@ -521,8 +686,12 @@ class HomeController extends GetxController implements GetxService {
         )
             .then((response) async {
           // Get.back();
-          if (response.body["status"] == "0") {
+          if (response.body is! Map) {
+            CustomToast.failToast(msg: "Couldn't load. Please try again.");
+            releaseOnFailure();
+          } else if (response.body["status"] == "0") {
             CustomToast.failToast(msg: response.body["message"]);
+            releaseOnFailure();
           } else if (response.body["status"] != "0") {
             ApiResponse<GetUsersBasedOnUserType> model = ApiResponse.fromJson(response.body, GetUsersBasedOnUserType.fromJson);
             if (model.status == "1") {
@@ -535,8 +704,13 @@ class HomeController extends GetxController implements GetxService {
                 }
               }
               getUsersBasedOnUserTypeLoad.value = true;
+            } else {
+              releaseOnFailure();
             }
           }
+        }).catchError((_) {
+          CustomToast.failToast(msg: "Couldn't load. Please try again.");
+          releaseOnFailure();
         });
       }
     });
@@ -703,7 +877,7 @@ class HomeController extends GetxController implements GetxService {
         already = false;
         CustomToast.noInternetToast();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         var c = await getCountryCode();
         await homeRepo.addFreeTrialUser(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
@@ -944,7 +1118,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         await homeRepo.changeFreeTrialStatus(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
           map: {"status": status, "id": id},
@@ -1094,11 +1268,38 @@ class HomeController extends GetxController implements GetxService {
           if (response.body["status"] == "0") {
             if (!silent) CustomToast.failToast(msg: response.body["message"]);
           } else if (response.body["status"] != "0") {
-            ApiResponse<UserHomeData> model = ApiResponse.fromJson(response.body, UserHomeData.fromJson);
+            ApiResponse<UserHomeData> model;
+            try {
+              model = ApiResponse.fromJson(response.body, UserHomeData.fromJson);
+            } catch (e, st) {
+              // Used to fail silently: she'd see an empty plan card
+              // with no clue why. Print it so it shows in the run log.
+              debugPrint('[userHome] could not read home data: $e\n$st');
+              return;
+            }
             if (model.status == "1") {
               userHomeData = model.data!;
               _lastUserHomeFetched = DateTime.now();
               userHomeLoad.value = true;
+              // Was already true on a silent reload: still tell Home her plans
+              // changed (e.g. just paid -> switch to the paid home now).
+              userHomeLoad.refresh();
+              // Mixpanel profile (no names): trial / paid / ended, so every
+              // chart can be split by where she is in her journey.
+              try {
+                final real = hasRealPlan;
+                AnalyticsHelper.setProfile({
+                  'plan_state': real == true
+                      ? 'paid'
+                      : (trialEndedUnpaid
+                          ? 'trial_ended'
+                          : (isFreeTrialUser.value ? 'trial' : 'none')),
+                  'active_plans': userHomeData!.userAllPlans
+                      .where((p) => p.remainingDays > 0)
+                      .map((p) => p.title)
+                      .join(', '),
+                });
+              } catch (_) {}
               if (userHomeData!.userAllPlans.isEmpty) {
                 upComingClassNotifier.value = null;
                 await FirebaseMessaging.instance.unsubscribeFromTopic('userPlan');
@@ -1135,13 +1336,14 @@ class HomeController extends GetxController implements GetxService {
       String? height,
       String? weight,
       String? price,
-      String? bmiResult}) {
+      String? bmiResult,
+      String signupMethod = 'email'}) {
     connectionService.checkConnection().then((value) async {
       if (!value) {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         final String currentTimeZone = await FlutterTimezone.getLocalTimezone();
 
         await homeRepo.addUserRepo(
@@ -1162,19 +1364,40 @@ class HomeController extends GetxController implements GetxService {
             "height": height,
             "bmiResult": bmiResult,
             "price": price,
-            "timeZone": currentTimeZone
+            "timeZone": currentTimeZone,
+            // Growth analytics: how and where she signed up.
+            "signupMethod": signupMethod,
+            "signupSource": sharedPreferences.getString('signup_source'),
+            "signupCampaign": sharedPreferences.getString('signup_campaign'),
           },
         ).then((response) async {
           Get.back();
 
           if (response.statusCode == 200) {
             if (response.body["status"] == "0") {
-              CustomToast.failToast(msg: response.body["message"]);
+              if (!status) AnalyticsHelper.signupFailed(signupMethod, '${response.body["message"] ?? 'refused'}');
+              final msg = '${response.body["message"] ?? ''}';
+              if (!status && msg.toLowerCase().contains('email already')) {
+                // Often her account was made but the answer was lost
+                // (internet dropped): offer log in instead of a dead end.
+                showAccountExistsDialog(email);
+              } else {
+                CustomToast.failToast(msg: response.body["message"]);
+              }
             } else if (response.body["status"] != "0") {
               ApiResponse<LoginModel> model = ApiResponse.fromJson(response.body, LoginModel.fromJson);
               if (model.status == "1") {
                 CustomToast.successToast(msg: response.body["message"]);
 
+                if (!status) {
+                  // Self sign-up (not admin adding a client).
+                  AnalyticsHelper.setUserId(model.data!.id.toString());
+                  AnalyticsHelper.signupCompleted(signupMethod);
+                  AnalyticsHelper.setProfile({
+                    'signup_method': signupMethod,
+                    'signup_source': sharedPreferences.getString('signup_source') ?? 'organic',
+                  });
+                }
                 if (status) {
                   getAllUsersFunc();
                 } else {
@@ -1199,51 +1422,84 @@ class HomeController extends GetxController implements GetxService {
     });
   }
 
-  addUserDetails({bool status = true, String? age, String? height, String? weight, String? bmiResult, String? mainGoal, String? healthConditions}) {
-    connectionService.checkConnection().then((value) async {
-      if (!value) {
-        CustomToast.noInternetToast();
-        // Get.back();
-      } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+  /// Saves her profile answers. Returns true when the server saved them.
+  /// [onboardingDone]: last sign-up page (server marks the questions done).
+  /// [navigate]: false lets the caller decide what opens next.
+  Future<bool> addUserDetails({bool status = true, String? age, String? height, String? weight, String? bmiResult, String? mainGoal, String? healthConditions, bool onboardingDone = false, bool navigate = true}) async {
+    final online = await connectionService.checkConnection();
+    if (!online) {
+      if (navigate) CustomToast.noInternetToast();
+      return false;
+    }
+    Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
+    Response? response;
+    try {
+      response = await homeRepo.addUserDetails(
+        accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
+        map: {
+          "userId": sharedPreferences.getString(Constants.userId),
+          "age": age,
+          "weight": weight,
+          "height": height,
+          "bmiResult": bmiResult,
+          if (mainGoal != null) "mainGoal": mainGoal,
+          if (healthConditions != null) "healthConditions": healthConditions,
+          if (onboardingDone) "onboardingDone": true,
+        },
+      ).timeout(const Duration(seconds: 25));
+    } catch (_) {
+      response = null;
+    }
+    if (Get.isDialogOpen ?? false) Get.back();
 
-        await homeRepo.addUserDetails(
-          accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
-          map: {"userId": sharedPreferences.getString(Constants.userId), "age": age, "weight": weight, "height": height, "bmiResult": bmiResult, if (mainGoal != null) "mainGoal": mainGoal, if (healthConditions != null) "healthConditions": healthConditions},
-        ).then((response) async {
-          Get.back();
+    final body = response?.body;
+    if (response == null || response.statusCode != 200 || body is! Map) {
+      if (navigate) CustomToast.failToast(msg: (body is Map ? body["message"] : null) ?? "Couldn't save. Please try again.");
+      return false;
+    }
+    if (body["status"] == "0") {
+      CustomToast.failToast(msg: body["message"]);
+      return false;
+    }
+    ApiResponse<LoginModel> model = ApiResponse.fromJson(response.body, (p0) {});
+    if (model.status != "1") return false;
 
-          if (response.statusCode == 200) {
-            if (response.body["status"] == "0") {
-              CustomToast.failToast(msg: response.body["message"]);
-            } else if (response.body["status"] != "0") {
-              ApiResponse<LoginModel> model = ApiResponse.fromJson(response.body, (p0) {});
-              if (model.status == "1") {
-                CustomToast.successToast(msg: response.body["message"]);
+    // Keep the signup answers in memory too, so screens that
+    // read them right after signup (like the free trial,
+    // which skips its goal question) see them without a
+    // fresh login.
+    final auth = Get.find<AuthController>();
+    if (mainGoal != null) {
+      auth.mainGoal.value = mainGoal;
+      auth.logInUser?.mainGoal = mainGoal;
+    }
+    if (healthConditions != null) {
+      auth.healthConditions.value = healthConditions;
+      auth.logInUser?.healthConditions = healthConditions;
+    }
+    if (age != null) auth.logInUser?.age = age;
+    if (onboardingDone) {
+      SignupProgress.markDone(sharedPreferences, sharedPreferences.getString(Constants.userId) ?? '');
+    }
+    if (navigate) {
+      CustomToast.successToast(msg: body["message"]);
+      auth.updateUserDetails(updateFields: false);
+    }
+    return true;
+  }
 
-                // Keep the signup answers in memory too, so screens that
-                // read them right after signup (like the free trial,
-                // which skips its goal question) see them without a
-                // fresh login.
-                final auth = Get.find<AuthController>();
-                if (mainGoal != null) {
-                  auth.mainGoal.value = mainGoal;
-                  auth.logInUser?.mainGoal = mainGoal;
-                }
-                if (healthConditions != null) {
-                  auth.healthConditions.value = healthConditions;
-                  auth.logInUser?.healthConditions = healthConditions;
-                }
-
-                auth.updateUserDetails(updateFields: false);
-              }
-            }
-          } else {
-            CustomToast.failToast(msg: response.body["message"]);
-          }
-        });
-      }
-    });
+  /// Sign-up questions: silent save of what she has answered so far
+  /// (no spinner, no toast). Offline: skipped, the phone keeps the draft.
+  Future<void> saveSignupDraft(Map<String, dynamic> fields, int step) async {
+    try {
+      if (!await connectionService.checkConnection()) return;
+      final userId = sharedPreferences.getString(Constants.userId);
+      if (userId == null || userId.isEmpty) return;
+      await homeRepo.addUserDetails(
+        accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
+        map: {"userId": userId, ...fields, "onboardingStep": step},
+      ).timeout(const Duration(seconds: 15));
+    } catch (_) {}
   }
 
   getPaymentLink(String amount, int id) {
@@ -1252,7 +1508,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         await homeRepo.getPaymentLink(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
           map: {"amount": amount, "planId": id},
@@ -1302,7 +1558,7 @@ class HomeController extends GetxController implements GetxService {
       }
       final successRedirectUrl = "fither://payment/success?planId=$planId";
       final failedRedirectUrl = "fither://payment/failed";
-      Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+      Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
       await homeRepo.getDirectPayPaymentUrl(
         accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
         map: {
@@ -1358,7 +1614,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         await homeRepo.assignWorkoutAndTrainer(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
           map: {"planId": allPlanModel!.plans[selectedPlanIndex.value].id, "dietitianId": selectedDietId.value, "trainerId": selectedTrainerId.value},
@@ -1403,7 +1659,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo.addAnnouncement(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
@@ -1436,7 +1692,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo.freezeMyAccount(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
@@ -1475,7 +1731,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo
             .synchronizationRepo(
@@ -1500,51 +1756,56 @@ class HomeController extends GetxController implements GetxService {
     });
   }
 
-  updateMyWeeklyReport() {
-    connectionService.checkConnection().then((value) async {
-      if (!value) {
-        CustomToast.noInternetToast();
-        // Get.back();
-      } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
-
-        await homeRepo.updateWeeklyReportRepo(
-          accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
-          map: {
-            "weight": firstWeight.text,
-            "currentWeight": currentWeight.text,
-            "arms": arms.text,
-            "chest": chest.text,
-            "abdoman": abdonmen.text,
-            "shoulder": shoulder.text,
-            "thighs": thighs.text,
-            "userId": sharedPreferences.getString(Constants.userId) ?? "",
-            "hips": hips.text,
-            "istDayDate": firstDay.text.replaceAll("/", "-"),
-            "currentDate": currentDate.text.replaceAll("/", "-"),
-            "weist": waist.text,
-            "review": labels[selectedSatisfaction.value],
-            "aboutService": tellUsMore.text
-          },
-        ).then((response) async {
-          Get.back();
-
-          if (response.statusCode == 200) {
-            if (response.body["status"] == "0") {
-              CustomToast.failToast(msg: response.body["message"]);
-            } else if (response.body["status"] != "0") {
-              ApiResponse model = ApiResponse.fromJson(response.body, (p0) {});
-              if (model.status == "1") {
-                CustomToast.successToast(msg: response.body["message"]);
-                clearMeasurementController();
-              }
-            }
-          } else {
-            CustomToast.failToast(msg: response.body["message"]);
-          }
-        });
-      }
-    });
+  /// Saves the weekly measurements. True when the server saved them.
+  /// Her first-day date + weight are remembered so she types them once.
+  Future<bool> updateMyWeeklyReport() async {
+    if (!await connectionService.checkConnection()) {
+      CustomToast.noInternetToast();
+      return false;
+    }
+    Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
+    Response? response;
+    try {
+      response = await homeRepo.updateWeeklyReportRepo(
+        accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
+        map: {
+          "weight": firstWeight.text,
+          "currentWeight": currentWeight.text,
+          "arms": arms.text,
+          "chest": chest.text,
+          "abdoman": abdonmen.text,
+          "shoulder": shoulder.text,
+          "thighs": thighs.text,
+          "userId": sharedPreferences.getString(Constants.userId) ?? "",
+          "hips": hips.text,
+          "istDayDate": firstDay.text.replaceAll("/", "-"),
+          "currentDate": currentDate.text.replaceAll("/", "-"),
+          "weist": waist.text,
+          "review": labels[selectedSatisfaction.value],
+          "aboutService": tellUsMore.text
+        },
+      );
+    } catch (_) {
+      response = null;
+    }
+    if (Get.isDialogOpen ?? false) Get.back();
+    final body = response?.body;
+    if (response == null || response.statusCode != 200 || body is! Map) {
+      CustomToast.failToast(msg: (body is Map ? body["message"] : null) ?? "Couldn't save. Please try again.");
+      return false;
+    }
+    if (body["status"] != "1") {
+      CustomToast.failToast(msg: body["message"]);
+      return false;
+    }
+    CustomToast.successToast(msg: "Weekly check-in saved");
+    sharedPreferences.setString('weekly_first_day', firstDay.text);
+    sharedPreferences.setString('weekly_first_weight', firstWeight.text);
+    sharedPreferences.setInt('weekly_report_at', DateTime.now().millisecondsSinceEpoch);
+    clearMeasurementController();
+    firstDay.text = sharedPreferences.getString('weekly_first_day') ?? '';
+    firstWeight.text = sharedPreferences.getString('weekly_first_weight') ?? '';
+    return true;
   }
 
   updateLinkFunc(TextEditingController textEditingController, int slotId, bool isDiet, int userId, String planId) {
@@ -1553,7 +1814,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo
             .updateLinkRepo(
@@ -1593,7 +1854,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo.updateSlotStatus(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
@@ -1641,7 +1902,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo.updateTrainerJoin(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
@@ -1676,7 +1937,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         // var plan = allPlanModel!.plans[selectedPlanIndex.value];
         // var expiryDate = DateTime.now()
@@ -1721,7 +1982,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         await homeRepo.updateUserRepo(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
           map: {
@@ -1762,7 +2023,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         await homeRepo.updateUserPayment(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
           map: {"userId": sharedPreferences.getString(Constants.userId) ?? "", "planId": planId},
@@ -1790,16 +2051,21 @@ class HomeController extends GetxController implements GetxService {
     });
   }
 
-  approveUser(String imageId, bool reject) {
+  /// [reason]: why the slip was rejected (sent to her). Oct 2026.
+  approveUser(String imageId, bool reject, {String? reason}) {
     connectionService.checkConnection().then((value) async {
       if (!value) {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
         await homeRepo.approveUser(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
-          map: {"planImageId": imageId, "rejected": reject},
+          map: {
+            "planImageId": imageId,
+            "rejected": reject,
+            if (reject && reason != null) "reason": reason,
+          },
         ).then((response) async {
           Get.back();
 
@@ -1828,7 +2094,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo.addTestimonials(
             accessToken: sharedPreferences.getString(Constants.accessToken) ?? "", map: {"image": testiPicture!.path}).then((response) async {
@@ -1857,7 +2123,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo.updateUserProfile(accessToken: sharedPreferences.getString(Constants.accessToken) ?? "", map: {
           "image": profilePicture!.path,
@@ -1892,7 +2158,7 @@ class HomeController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
 
         await homeRepo
             .updateUserDietOfWeek(
@@ -1919,14 +2185,61 @@ class HomeController extends GetxController implements GetxService {
     });
   }
 
+  /// True when the last uploaded slip was approved by the AI and her plan
+  /// is already on (upload screen then says so). Oct 2026.
+  final RxBool lastSlipAutoApproved = false.obs;
+
   Future<bool> addPlanBuyImage(String planId, int durationId, String price) async {
     bool success = false;
+    lastSlipAutoApproved.value = false;
     await connectionService.checkConnection().then((value) async {
       if (!value) {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+        // Clear "please wait" while the slip uploads and is checked (it can
+        // take a few seconds); back button blocked so she can't leave
+        // half-way and upload twice.
+        Get.dialog(
+          PopScope(
+            canPop: false,
+            child: Center(
+              child: Material(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 26, vertical: 22),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      FhLoader(),
+                      SizedBox(height: 16),
+                      Text(
+                        'Uploading your payment slip…',
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1A3A22),
+                        ),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        "Please wait and don't close the app.",
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 12,
+                          color: Color(0xFF7A8C78),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          barrierDismissible: false,
+        );
 
         Plan? plan = allPlanModel?.plans.firstWhereOrNull((p) => p.id == selectedPlanId.value);
 
@@ -1999,7 +2312,10 @@ class HomeController extends GetxController implements GetxService {
                   // the only place we can make that distinction.
                   final wasAlreadyPaid =
                       Get.find<AuthController>().logInUser?.status ?? false;
+                  lastSlipAutoApproved.value = true;
                   Get.find<AuthController>().markPaid();
+                  // Fresh home + trial state now (no logout / login needed).
+                  getUserHomeFunc(isFromFree: true, silent: true, forceRefresh: true);
                   debugPrint('🧾 SLIP UPLOAD · auto-promoted to paid · '
                       'home will swap to PaidHomeScreenV2');
                   if (wasAlreadyPaid) {
@@ -2131,11 +2447,15 @@ class HomeController extends GetxController implements GetxService {
         .then((response) {
       if (response.statusCode == 200 && response.body["status"] == "1") {
         success = true;
+        // Not ready within 6 s: made in the background, push when ready.
+        final data = response.body["data"];
+        setTrialPlanPending(data is Map && data["pending"] == true);
       } else if (response.statusCode == 200 &&
           (response.body["message"] ?? "")
               .toString()
               .toLowerCase()
               .contains("already got a plan")) {
+        setTrialPlanPending(false);
         // Not a real failure -- the desired end state (a plan exists) is
         // already met, most often because a second trial-start trigger
         // fired after the first one already ran this. Let the caller
@@ -2155,6 +2475,8 @@ class HomeController extends GetxController implements GetxService {
 
   Future<void> getMyTrialJourney() async {
     trialLoad.value = false;
+    // Never leave Home waiting if this call fails or hangs (Nov 2026).
+    Future.delayed(const Duration(seconds: 8), () => trialChecked.value = true);
 
     await connectionService.checkConnection().then((value) async {
       if (!value) {
@@ -2164,6 +2486,7 @@ class HomeController extends GetxController implements GetxService {
         // path. trialJourney stays null; the screen's _loadJourney() will
         // attempt startTrial() which will also fail and show its own toast.
         trialLoad.value = true;
+        trialChecked.value = true;
       } else {
         await homeRepo
             .getMyTrial(
@@ -2201,6 +2524,7 @@ class HomeController extends GetxController implements GetxService {
           // Always unblock the screen regardless of success/failure so it
           // never hangs on a CircularProgress with no recovery path.
           trialLoad.value = true;
+          trialChecked.value = true;
         });
       }
     });

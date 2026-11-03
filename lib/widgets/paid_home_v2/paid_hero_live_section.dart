@@ -1,11 +1,15 @@
+import '../../helper/class_join_memory.dart';
 import 'dart:async';
 import 'dart:math' show max;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../data/controllers/consultation_controller/consultation_controller.dart';
+import '../../data/controllers/home_controller/home_controller.dart';
 import '../../data/controllers/motivation_controller/motivation_controller.dart';
 import '../../data/models/home_dashboard/home_dashboard_model.dart';
 import '../../helper/analytics_helper.dart';
@@ -14,7 +18,11 @@ import '../../utils/slot_input_builder.dart'
     show parseSlotWallClock, minutesUntilStart;
 import '../../utils/slot_ui_state.dart';
 import '../app_bar_widget.dart';
+import '../toasts.dart';
+import '../class_reminder/class_reminder_flow.dart';
 import '../new_home/phase_theme.dart';
+import '../anim/live_dot.dart';
+import '../anim/motion.dart';
 
 /// H-01 LIVE section.
 ///
@@ -76,11 +84,18 @@ class PaidHeroLiveSection extends StatefulWidget {
   // so nothing changes for any existing caller that doesn't pass it.
   final bool isFrozen;
 
+  /// Preview (not started the free trial yet): every action button on
+  /// the card becomes this one, e.g. "Try free →" that starts the trial.
+  final String? previewCtaLabel;
+  final VoidCallback? onPreviewCta;
+
   const PaidHeroLiveSection({
     Key? key,
     required this.live,
     required this.theme,
     this.isFrozen = false,
+    this.previewCtaLabel,
+    this.onPreviewCta,
   }) : super(key: key);
 
   @override
@@ -101,9 +116,355 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
   // (green "IN SESSION" pill, "{M} min remaining", "Rejoin" button).
   static const int _kNearEndMinutes = 10;
 
+  /// Mixpanel: Join now / Rejoin first appeared (once per class per day).
+  static final Set<String> _seenJoin = {};
+  void _trackJoinSeen(LiveClass l, bool rejoin) {
+    final d = DateTime.now();
+    final key = '${l.slotId}-${d.year}${d.month}${d.day}-$rejoin';
+    if (!_seenJoin.add(key)) return;
+    final trial = Get.isRegistered<HomeController>() && Get.find<HomeController>().isFreeTrialUser.value;
+    AnalyticsHelper.classJoinButtonSeen(where: 'home', tier: trial ? 'free_trial' : 'paid', rejoin: rejoin);
+  }
+  /// Last 20 min: a woman who never joined sees "Join now · 8 min left".
+  static const int _kLastCallMinutes = 20;
+
+  bool get _isTrialUser =>
+      Get.isRegistered<HomeController>() && Get.find<HomeController>().isFreeTrialUser.value;
+
+  /// Free trial only: minutes left to join (join window after the class
+  /// start), 0 when it's gone, null for paid women.
+  int? _trialJoinMinutesLeft(dynamic l, DateTime anchor, DateTime now) {
+    if (!_isTrialUser) return null;
+    final start = parseSlotWallClock(l.start, anchor);
+    if (start == null) return null;
+    final window = Get.find<HomeController>().joinWindowMinutes.value;
+    final closes = start.add(Duration(minutes: window));
+    final left = closes.difference(now).inSeconds;
+    return left <= 0 ? 0 : (left / 60).ceil();
+  }
+
+  // Countdown + Get ready start this many minutes before class; earlier
+  // than that the card shows the calm "UP NEXT" state.
+  static const int _kUpNextLeadMinutes = 15; // matches the 15-min reminder push
+
+  // Her reminder picks (null = not loaded yet). Empty = she gets
+  // reminders for every class, so no "Remind me" link is needed.
+  Set<int>? _pickedIds;
+  Map<String, dynamic> _ws = const {};
+  bool _reminderAdded = false;
+
+  // Last picks we loaded, kept while the app runs. Home rebuilds this card
+  // when she comes back from another screen (Profile…); starting from the
+  // last known picks stops the button flashing "Reminder on" → "Remind me"
+  // while they reload (Oct 2026).
+  static Set<int>? _lastIds;
+  static Map<String, dynamic> _lastWs = const {};
+
+  Future<void> _loadPicks() async {
+    try {
+      final p = await Get.find<ConsultationController>().loadProfile();
+      final ws = p?.workoutSection ?? const {};
+      final ids = ((ws['preferredSlotIds'] as List?) ?? const [])
+          .map((e) => int.tryParse('$e'))
+          .whereType<int>()
+          .toSet();
+      if (mounted) {
+        _lastIds = ids;
+        _lastWs = Map<String, dynamic>.from(ws);
+        setState(() {
+          _pickedIds = ids;
+          _ws = Map<String, dynamic>.from(ws);
+          _reminderAdded = false; // fresh truth from the server
+        });
+      }
+    } catch (_) {}
+  }
+
+  bool _isReminded(LiveClass l) {
+    if (_pickedIds == null) return true; // unknown yet: don't offer the link
+    if (_reminderAdded) return true;
+    return ClassReminderFlow.isReminded(
+      ws: _ws,
+      slotId: l.slotId,
+      start: l.start,
+      dayOffset: l.dayOffset,
+    );
+  }
+
+  /// Green "Try free →" button for preview users (same look as Join).
+  Widget _previewCta() {
+    final accent = widget.theme.accent;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: widget.onPreviewCta,
+      // Never wider than 160 so it can't push the time box off screen
+      // (small phones); a longer label shrinks to fit on one line.
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 160),
+        child: _pulse(Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          decoration: BoxDecoration(
+            color: accent,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [BoxShadow(color: accent.withOpacity(0.28), blurRadius: 12)],
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              widget.previewCtaLabel ?? 'Try free →',
+              maxLines: 1,
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        )),
+      ),
+    );
+  }
+
+  /// Gentle "breathing" on the Try free button (1.0 ↔ 1.03, ~1.8 s).
+  /// Off when the phone asks for less motion.
+  Widget _pulse(Widget child) {
+    if (Motion.calm(context)) return child;
+    return child
+        .animate(onPlay: (c) => c.repeat(reverse: true), delay: const Duration(milliseconds: 900))
+        .scaleXY(begin: 1.0, end: 1.03, duration: const Duration(milliseconds: 900), curve: Curves.easeInOutSine);
+  }
+
+  Future<void> _remindMe(LiveClass l) async {
+    final id = l.slotId;
+    final start = l.start;
+    if (id == null || start == null) return;
+    // 0–1 picks: adds it. 2 picks: swap sheet or "just this once".
+    final ok = await ClassReminderFlow.request(
+      slotId: id,
+      start: start,
+      dayOffset: l.dayOffset,
+    );
+    if (!mounted) return;
+    if (ok) setState(() => _reminderAdded = true);
+    _loadPicks();
+  }
+
+  /// Calm "UP NEXT" card: class, when, trainer · duration · intensity, and
+  /// a small "Remind me" link. No countdown or button yet.
+  Widget _upNextCard(LiveClass l, DateTime start) {
+    final now = AppClock.now();
+    final isToday = start.year == now.year &&
+        start.month == now.month &&
+        start.day == now.day;
+    final title = (l.classType ?? 'Live class').trim();
+    final sub = <String>[];
+    final trainer = (l.trainerName ?? '').trim();
+    if (trainer.isNotEmpty) sub.add(trainer);
+    final end = parseSlotWallClock(l.end, start);
+    final dur = l.durationMinutes ?? (end == null ? 0 : end.difference(start).inMinutes);
+    if (dur > 0) sub.add('$dur min');
+    if ((l.level ?? '').trim().isNotEmpty) sub.add('${l.level!.trim()} intensity');
+    final reminded = _isReminded(l);
+    // Default "every class" (she never picked): nudge to pick 2 times.
+    final pickTimes = _pickedIds != null && !_reminderAdded &&
+        ClassReminderFlow.isDefaultAll(_ws);
+
+    // Title split like the countdown card: first word bold, rest muted.
+    final sp = title.indexOf(' ');
+    final first = sp > 0 ? title.substring(0, sp) : title;
+    final rest = sp > 0 ? title.substring(sp + 1) : '';
+
+    // "in 2h 15m" / "in 45 min"
+    final diff = start.difference(now);
+    final h = diff.inHours;
+    final m = diff.inMinutes % 60;
+    final inText = h > 0 ? 'in ${h}h${m > 0 ? ' ${m}m' : ''}' : 'in ${diff.inMinutes} min';
+
+    // Compact (Oct 2026): 3 short left-aligned rows, reminder chip on the
+    // right, centred on them.
+    //   ● UP NEXT · IN 5H 9M
+    //   Yoga  8:00 AM                         [🔔 Remind me]
+    //   Hira Trainer · 50 min · Beginner
+    final level = (l.level ?? '').trim();
+    final shortSub = <String>[
+      if (trainer.isNotEmpty) trainer,
+      if (dur > 0) '$dur min',
+      if (level.isNotEmpty) level,
+    ];
+    final timeText = isToday
+        ? DateFormat('h:mm a').format(start)
+        : 'Tomorrow ${DateFormat('h:mm a').format(start)}';
+
+    // Round bell: outline = tap to get a reminder; filled = reminder on;
+    // sliders = pick your 2 class times.
+    final Widget bell = widget.onPreviewCta != null
+        ? _previewCta()
+        : _pickedIds == null
+            // Very first load: don't guess (it used to show "Reminder on").
+            ? const SizedBox(width: 1)
+            : Tooltip(
+            message: pickTimes
+                ? 'Pick 2 class times'
+                : reminded
+                    ? 'Reminder on'
+                    : 'Remind me',
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: pickTimes
+                  ? () async {
+                      await ClassReminderFlow.openTimePicker();
+                      _loadPicks();
+                    }
+                  : reminded
+                      ? null
+                      : () => _remindMe(l),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: reminded && !pickTimes
+                      ? widget.theme.accent.withOpacity(0.16)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: widget.theme.accent
+                        .withOpacity(reminded && !pickTimes ? 0.0 : 0.6),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      pickTimes
+                          ? Icons.tune_rounded
+                          : reminded
+                              ? Icons.notifications_active_rounded
+                              : Icons.notifications_none_rounded,
+                      size: 13,
+                      color: widget.theme.accent,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      pickTimes
+                          ? 'Pick 2 times'
+                          : reminded
+                              ? 'Reminder on'
+                              : 'Remind me',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: widget.theme.accent,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 16, 22, 0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              // Pill: same shape as "STARTING IN 8 MIN", calm colours.
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                decoration: BoxDecoration(
+                  color: widget.theme.accent.withOpacity(0.16),
+                  borderRadius: const BorderRadius.all(Radius.circular(20)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 5,
+                      height: 5,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: widget.theme.accent,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'UP NEXT · ${inText.toUpperCase()}',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        color: widget.theme.accent,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text.rich(
+            TextSpan(children: [
+              TextSpan(
+                text: first,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w800, color: Colors.white),
+              ),
+              if (rest.isNotEmpty)
+                TextSpan(
+                  text: ' $rest',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w400,
+                      color: Colors.white.withOpacity(0.55)),
+                ),
+              TextSpan(
+                text: '   $timeText',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0,
+                  color: Colors.white.withOpacity(0.85),
+                ),
+              ),
+            ]),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 20, letterSpacing: -0.2, height: 1.2),
+          ),
+          if (shortSub.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              shortSub.join(' · '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+                color: Colors.white.withOpacity(0.65),
+              ),
+            ),
+          ],
+        ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          bell,
+        ],
+      ),
+    );
+  }
+
+
   // How close to start (or already inside the window) before the card
   // moves on from "Confirmed" to "Get ready"/"trainer is setting up".
-  static const int _kGetReadyLeadMinutes = 10;
+  static const int _kGetReadyLeadMinutes = 15;
 
   static const Color _readyGreen = Color(0xFF6DC55A);
   static const Color _liveRed = Color(0xFFE24B4A);
@@ -112,7 +473,11 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
   @override
   void initState() {
     super.initState();
-    _ticker = Timer.periodic(const Duration(seconds: 30), (_) {
+    // 1s so the "Starts in mm:ss" countdown ticks live.
+    _pickedIds = _lastIds;
+    _ws = _lastWs;
+    _loadPicks();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
   }
@@ -125,8 +490,35 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
 
   @override
   Widget build(BuildContext context) {
+    // Cross-fade when the card moves between states (up next -> get
+    // ready -> LIVE -> in session ...). Each state's card carries its own
+    // key; within one state the card just updates in place (countdown,
+    // elapsed minutes), so nothing replays. Reduce-motion: instant swap.
+    final calm = Motion.calm(context);
+    final duration = calm ? Duration.zero : const Duration(milliseconds: 300);
+    return AnimatedSize(
+      duration: duration,
+      curve: Motion.ease,
+      alignment: Alignment.topCenter,
+      // No clipping: the Join button's glow paints past the card's edge.
+      clipBehavior: Clip.none,
+      child: AnimatedSwitcher(
+        duration: duration,
+        switchInCurve: Curves.easeOut,
+        switchOutCurve: Curves.easeIn,
+        layoutBuilder: (current, previous) => Stack(
+          alignment: Alignment.topLeft,
+          clipBehavior: Clip.none,
+          children: [...previous, if (current != null) current],
+        ),
+        child: _buildCard(context),
+      ),
+    );
+  }
+
+  Widget _buildCard(BuildContext context) {
     final l = widget.live;
-    if (l == null) return const SizedBox.shrink();
+    if (l == null) return const SizedBox.shrink(key: ValueKey('live_none'));
 
     // Anchor the slot's wall-clock start/end strings to today -- live
     // classes are always today's occurrence. If either fails to parse
@@ -134,15 +526,27 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
     // "only show when explicitly In Progress" behavior rather than
     // crashing or guessing.
     final today = AppClock.now();
-    final anchor = DateTime(today.year, today.month, today.day);
+    final anchor = DateTime(today.year, today.month, today.day)
+        .add(Duration(days: l.dayOffset));
     final start = parseSlotWallClock(l.start, anchor);
     final end = parseSlotWallClock(l.end, anchor);
     if (start == null || end == null) {
-      if (l.status != 'In Progress') return const SizedBox.shrink();
-      return _legacyCard(l);
+      if (l.status != 'In Progress') {
+        return const SizedBox.shrink(key: ValueKey('live_none'));
+      }
+      return KeyedSubtree(key: const ValueKey('live_legacy'), child: _legacyCard(l));
     }
 
     final now = AppClock.now();
+    // More than 15 min away (or tomorrow): calm "UP NEXT", no countdown.
+    if (l.status != SlotStatus.cancelled &&
+        l.status != SlotStatus.inProgress &&
+        start.difference(now).inMinutes > _kUpNextLeadMinutes) {
+      return KeyedSubtree(
+        key: const ValueKey('live_upnext'),
+        child: _upNextCard(l, start),
+      );
+    }
     final state = resolveSlotUIState(
       slot: SlotInput(
         status: l.status,
@@ -168,13 +572,12 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
     if (state == SlotUIState.past ||
         state == SlotUIState.endedNotAttended ||
         state == SlotUIState.endedEarly) {
-      return const SizedBox.shrink();
+      return const SizedBox.shrink(key: ValueKey('live_none'));
     }
 
     final bool isCancelled = state == SlotUIState.cancelled;
     final bool isTrulyLive = state == SlotUIState.liveReady;
     final bool isBlocked = state == SlotUIState.liveBlocked;
-    final bool hasLink = (l.trainerLink ?? '').trim().isNotEmpty;
     // True from `_kGetReadyLeadMinutes` before start all the way through
     // the rest of the class window -- once reached, it stays true, so
     // "Get ready" / "trainer is setting up" persists through any gap
@@ -192,10 +595,18 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
       phase = _Phase.blocked;
     } else if (!closeEnough) {
       phase = _Phase.confirmed;
-    } else if (hasLink) {
-      phase = _Phase.getReady;
     } else {
-      phase = _Phase.waitingForLink;
+      // The join link now only arrives once the trainer taps Start (the
+      // server hides it before), so "Get ready" no longer waits for it.
+      phase = _Phase.getReady;
+    }
+
+    // Free trial: join window over and she never joined → don't keep
+    // showing this class (the server moves her to the next one).
+    if (phase == _Phase.live &&
+        _trialJoinMinutesLeft(l, anchor, now) == 0 &&
+        !(l.joinedToday || ClassJoinMemory.joinedToday(l.slotId))) {
+      return const SizedBox.shrink(key: ValueKey('live_none'));
     }
 
     final presentation = presentationForState(
@@ -212,7 +623,20 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
     final int remainingMinutes = max(0, end.difference(now).inMinutes);
     final bool hasStarted = !now.isBefore(start);
 
-    final isNearEnd = phase == _Phase.live && remainingMinutes <= _kNearEndMinutes;
+    // Trainer ran past the scheduled end: not "near the end" (no
+    // "0 min remaining" / Rejoin look), just a normal live class.
+    final bool overrun = !end.isAfter(now);
+    // Free trial, not joined yet: all timing on the card is about the
+    // join window (first N min), not the class length.
+    final int? trialJoinLeft = phase == _Phase.live &&
+            !(l.joinedToday || ClassJoinMemory.joinedToday(l.slotId))
+        ? _trialJoinMinutesLeft(l, anchor, now)
+        : null;
+    final isNearEnd = phase == _Phase.live &&
+        trialJoinLeft == null &&
+        !overrun &&
+        remainingMinutes <= _kNearEndMinutes;
+
 
     // ── pill ─────────────────────────────────────────────────────────
     late final Color pillColor;
@@ -227,10 +651,10 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
         showPillDot = false;
         break;
       case _Phase.confirmed:
-        pillColor = _readyGreen.withOpacity(0.2);
-        pillLabel = 'CONFIRMED';
-        pillTextColor = _readyGreen;
-        showPillDot = false;
+        pillColor = _amber.withOpacity(0.18);
+        pillLabel = 'STARTING IN ${minutesUntilStart(start, now) ?? 0} MIN';
+        pillTextColor = _amber;
+        showPillDot = true;
         break;
       case _Phase.live:
         if (isNearEnd) {
@@ -262,16 +686,16 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
           // amber "not live yet" treatment as the pre-start countdown,
           // just with copy that matches where we actually are (waiting
           // on the trainer, not waiting on the clock).
-          pillColor = _amber;
+          pillColor = _amber.withOpacity(0.18);
           pillLabel = 'GETTING READY';
-          pillTextColor = Colors.white;
+          pillTextColor = _amber;
         } else {
           final mins = minutesUntilStart(start, now) ?? 0;
-          pillColor = _amber;
-          pillLabel = 'STARTING IN ${mins}M';
-          pillTextColor = Colors.white;
+          pillColor = _amber.withOpacity(0.18);
+          pillLabel = 'STARTING IN $mins MIN';
+          pillTextColor = _amber;
         }
-        showPillDot = false;
+        showPillDot = true;
         break;
     }
 
@@ -282,10 +706,13 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
         statusText = '';
         break;
       case _Phase.confirmed:
-        statusText = 'Starts at ${DateFormat('h:mm a').format(start)}';
+        statusText = ''; // start time is in the box below
         break;
       case _Phase.live:
-        if (isNearEnd) {
+        if (trialJoinLeft != null) {
+          final w = Get.find<HomeController>().joinWindowMinutes.value;
+          statusText = 'Trial: join within $w min of start · ${max(1, trialJoinLeft)} min left';
+        } else if (isNearEnd) {
           statusText = '$elapsedMinutes min elapsed';
         } else {
           final parts = <String>[];
@@ -332,21 +759,33 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
       if (trainer.isNotEmpty) subParts.add(trainer);
     } else {
       if (trainer.isNotEmpty) subParts.add(trainer);
-      if (l.durationMinutes != null) subParts.add('${l.durationMinutes} min');
-      if (l.caloriesEstimate != null) subParts.add('${l.caloriesEstimate} kcal');
+      final dur = l.durationMinutes ?? end.difference(start).inMinutes;
+      if (dur > 0) subParts.add('$dur min');
+      if ((l.level ?? '').trim().isNotEmpty) subParts.add('${l.level!.trim()} intensity');
     }
     final subtitle = subtitleOverride ?? subParts.join(' · ');
 
     // ── button (none for cancelled / confirmed -- nothing to do yet) ──
-    final bool showButton = phase != _Phase.cancelled && phase != _Phase.confirmed;
+    // Every pre-start phase shows "Get ready"; it turns into "Join now"
+    // once the trainer starts the class.
+    final bool showButton = phase != _Phase.cancelled;
+    final bool isPreview = widget.onPreviewCta != null;
     // Countdown info row (H-06's "Starts at {time}" box) -- only while
     // there's still real time left to count down, i.e. pre-start
     // get-ready/waiting states. Once class time itself has arrived this
     // would just be stale, so it's dropped.
-    final bool showInfoRow =
-        (phase == _Phase.getReady || phase == _Phase.waitingForLink) && !hasStarted;
+    final bool showInfoRow = (phase == _Phase.confirmed ||
+            phase == _Phase.getReady ||
+            phase == _Phase.waitingForLink) &&
+        !hasStarted;
+    final Duration toStart = start.difference(now);
+    String two(int n) => n.toString().padLeft(2, '0');
+    final String countdown = toStart.inHours > 0
+        ? '${toStart.inHours}:${two(toStart.inMinutes % 60)}:${two(toStart.inSeconds % 60)}'
+        : '${two(toStart.inMinutes)}:${two(toStart.inSeconds % 60)}';
 
     return Padding(
+      key: ValueKey('live_${phase.name}_$isNearEnd'),
       padding: const EdgeInsets.fromLTRB(22, 14, 22, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -365,16 +804,20 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (showPillDot) ...[
-                      const SizedBox(
-                        width: 5,
-                        height: 5,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            shape: BoxShape.circle,
+                      // Red LIVE pill: the dot gently breathes.
+                      if (phase == _Phase.live && !isNearEnd)
+                        FhLiveDot(size: 5, color: pillTextColor)
+                      else
+                        SizedBox(
+                          width: 5,
+                          height: 5,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: pillTextColor,
+                              shape: BoxShape.circle,
+                            ),
                           ),
                         ),
-                      ),
                       const SizedBox(width: 4),
                     ],
                     Text(
@@ -462,9 +905,12 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
                         subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                        // Was 26% white: trainer / duration / intensity
+                        // were nearly invisible on the dark card.
                         style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.white.withOpacity(0.26),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.white.withOpacity(0.72),
                         ),
                       ),
                     ],
@@ -473,34 +919,49 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
               ),
               if (showButton) ...[
                 const SizedBox(width: 14),
-                _buildButton(presentation, l, phase, isNearEnd),
+                isPreview
+                    ? _previewCta()
+                    : _buildButton(presentation, l, phase, isNearEnd),
               ],
             ],
           ),
           if (showInfoRow) ...[
             const SizedBox(height: 13),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
               ),
               child: Row(
                 children: [
                   Text(
                     'Starts at',
                     style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.white.withOpacity(0.35),
+                      fontSize: 12,
+                      color: Colors.white.withOpacity(0.45),
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 12),
                   Text(
                     DateFormat('h:mm a').format(start),
                     style: const TextStyle(
-                      fontSize: 18,
+                      fontSize: 20,
                       fontWeight: FontWeight.w800,
                       color: Color(0xFFFAC775),
+                    ),
+                  ),
+                  const Spacer(),
+                  // Live timer where the mockup has "34 booked".
+                  // Pre-start only (see showInfoRow), so it's always a
+                  // countdown: label it "in mm:ss".
+                  Text(
+                    'in $countdown',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white.withOpacity(0.45),
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
                 ],
@@ -533,7 +994,19 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
     SlotButtonAction action = SlotButtonAction.none;
     String? toastMessage;
 
+    // For the live button label.
+    final now = AppClock.now();
+    final anchor = DateTime(now.year, now.month, now.day).add(Duration(days: l.dayOffset));
+    final end = parseSlotWallClock(l.end, anchor);
+    final bool overrun = end == null || !end.isAfter(now);
+    final int remainingMinutes = end == null ? 0 : max(0, end.difference(now).inMinutes);
+    // "Rejoin" only when SHE already joined this class today (server flag,
+    // or this phone remembers it). Never just because the class is ending.
+    final bool joinedBefore = l.joinedToday || ClassJoinMemory.joinedToday(l.slotId);
+
     switch (phase) {
+      case _Phase.confirmed:
+      case _Phase.waitingForLink:
       case _Phase.getReady:
         // H-06 "Get ready": green ghost/outline button. Not tappable into
         // the class yet -- joining is still gated on the trainer's manual
@@ -544,13 +1017,7 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
         border = Border.all(color: _readyGreen.withOpacity(0.3));
         enabled = true;
         action = SlotButtonAction.showToast;
-        toastMessage = 'Hang tight, the trainer is about to start.';
-        break;
-      case _Phase.waitingForLink:
-        label = 'Join';
-        bg = Colors.white24;
-        action = SlotButtonAction.showToast;
-        toastMessage = 'Trainer is setting up, hold tight';
+        toastMessage = 'Hang tight, the trainer is about to start. The button turns into Join now when the class begins.';
         break;
       case _Phase.blocked:
         // "Join" for copy parity with the live/getReady buttons --
@@ -561,12 +1028,22 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
         toastMessage = presentation.toastMessage;
         break;
       case _Phase.live:
-        label = isNearEnd ? 'Rejoin' : 'Join';
+        _trackJoinSeen(l, joinedBefore);
+        final trialLeft = _trialJoinMinutesLeft(l, anchor, now);
+        if (joinedBefore) {
+          label = 'Rejoin';
+        } else if (trialLeft != null) {
+          // Free trial: join only in the first N minutes after start —
+          // show how long she has. (Paid women just see "Join now".)
+          label = 'Join now · ${max(1, trialLeft)} min left';
+        } else {
+          label = 'Join now';
+        }
         bg = widget.theme.accent;
         enabled = true;
         action = presentation.action;
-        // H-05's glow shadow; H-09's "Rejoin" has none in the mockup.
-        if (!isNearEnd) {
+        // Glow for "Join now"; "Rejoin" is calmer.
+        if (!joinedBefore) {
           shadow = [
             BoxShadow(
                 color: widget.theme.accent.withOpacity(0.33), blurRadius: 16),
@@ -574,8 +1051,7 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
         }
         break;
       case _Phase.cancelled:
-      case _Phase.confirmed:
-        // Never reached -- build() skips rendering a button for these.
+        // Never reached -- build() skips rendering a button for this.
         label = '';
         break;
     }
@@ -593,12 +1069,19 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
             borderRadius: BorderRadius.circular(16),
             boxShadow: shadow,
           ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: isNearEnd ? 13 : 14,
-              fontWeight: FontWeight.w800,
-              color: textColor,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 150),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: isNearEnd ? 13 : 14,
+                  fontWeight: FontWeight.w800,
+                  color: textColor,
+                ),
+              ),
             ),
           ),
         ),
@@ -617,11 +1100,27 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
         final id = l.slotId;
         if (link.isEmpty || id == null) return;
 
+        // Free-trial users: first 10 minutes only (app + server check),
+        // same as the schedule screen. Used to be skipped on this card.
+        if (Get.isRegistered<HomeController>() &&
+            !await HelpingWidgets.trialJoinGate(
+              homeController: Get.find<HomeController>(),
+              slotId: id,
+              start: l.start,
+              className: l.type,
+              trainerName: l.trainerName,
+            )) {
+          return;
+        }
+
         await AnalyticsHelper.trackWorkoutJoinClicked(
           slotId: id.toString(),
           className: l.type,
           trainerName: l.trainerName,
-          userTier: 'paid',
+          userTier: (Get.isRegistered<HomeController>() &&
+                  Get.find<HomeController>().isFreeTrialUser.value)
+              ? 'free_trial'
+              : 'paid',
           linkType: link.contains('https') ? 'https_url' : 'zoom_native',
         );
 
@@ -676,7 +1175,7 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
     final trainer = (l.trainerName ?? '').trim();
     if (trainer.isNotEmpty) subParts.add(trainer);
     if (l.durationMinutes != null) subParts.add('${l.durationMinutes} min');
-    if (l.caloriesEstimate != null) subParts.add('${l.caloriesEstimate} kcal');
+    if ((l.level ?? '').trim().isNotEmpty) subParts.add('${l.level!.trim()} intensity');
     final subtitle = subParts.join(' · ');
 
     return Padding(
@@ -696,16 +1195,7 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: const [
-                    SizedBox(
-                      width: 5,
-                      height: 5,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
+                    FhLiveDot(size: 5, color: Colors.white),
                     SizedBox(width: 4),
                     Text(
                       'LIVE',
@@ -775,7 +1265,7 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
                         subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.26)),
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.white.withOpacity(0.72)),
                       ),
                     ],
                   ],
@@ -786,10 +1276,21 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
                 behavior: HitTestBehavior.opaque,
                 onTap: widget.isFrozen
                     ? null
-                    : () {
+                    : () async {
                         final link = l.trainerLink;
                         final id = l.slotId;
                         if (link == null || link.isEmpty || id == null) return;
+                        // Same gate as every Join (trial window / trial ended).
+                        if (Get.isRegistered<HomeController>() &&
+                            !await HelpingWidgets.trialJoinGate(
+                              homeController: Get.find<HomeController>(),
+                              slotId: id,
+                              start: l.start,
+                              className: l.type,
+                              trainerName: l.trainerName,
+                            )) {
+                          return;
+                        }
                         HelpingWidgets.startMeeting(link, id.toString());
                       },
                 child: Opacity(

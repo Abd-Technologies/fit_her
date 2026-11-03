@@ -1,4 +1,5 @@
 import 'package:fitness_zone_2/data/api_provider/api_provider.dart';
+import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.dart';
 import 'package:fitness_zone_2/values/constants.dart';
 import 'package:fitness_zone_2/widgets/toasts.dart';
 import 'package:get/get.dart';
@@ -144,6 +145,12 @@ class TrialTokenController extends GetxController {
             .map(TrialTokenModel.fromJson)
             .toList();
         tokens.assignAll(list);
+        // Trial length set by admin: keeps "your N-day trial" in the
+        // share message right on staff phones too.
+        final days = int.tryParse('${data['trialDays'] ?? ''}');
+        if (days != null && days > 0 && Get.isRegistered<HomeController>()) {
+          Get.find<HomeController>().trialDays.value = days;
+        }
       } else {
         CustomToast.failToast(
           msg: response.body['message'] as String? ?? 'Failed to load tokens',

@@ -8,6 +8,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:get/get.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 /// Trial length from the server (TRIAL_DAYS), 3 until it loads.
 int get _trialDays => Get.isRegistered<HomeController>()
@@ -49,7 +50,7 @@ class TrialTokenScreen extends StatelessWidget {
           Expanded(
             child: Obx(() {
               if (ctrl.isLoading.value && ctrl.tokens.isEmpty) {
-                return const Center(child: CircularProgressIndicator());
+                return const Center(child: FhLoader());
               }
               if (ctrl.tokens.isEmpty) {
                 return Center(

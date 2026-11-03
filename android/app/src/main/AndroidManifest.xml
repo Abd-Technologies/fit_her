@@ -24,6 +24,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Phone reminders (flutter_local_notifications 18, Oct 2026): lets the
+         plugin put the 8:00 morning reminder back after the phone restarts. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:label="Fit Her"
         tools:replace="android:usesCleartextTraffic"
@@ -92,6 +96,12 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Pushes that arrive while the app is closed use our channel
+             (banner + sound), not Android's "Miscellaneous" one. The app
+             creates the channel at start (NotificationServices). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="high_importance_channel" />
 
 
         <provider
@@ -107,6 +117,20 @@
                 tools:replace="android:resource" />
         </provider>
         <uses-library android:name="org.chromium.media" android:required="false" />
+
+        <!-- Phone reminders (flutter_local_notifications 18, Oct 2026). Without
+             these two receivers a scheduled reminder (the 8:00 morning nudge)
+             is never shown on Android, and is lost when the phone restarts.
+             Copied from the plugin's README, "AndroidManifest.xml setup". -->
+        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
+        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
 
     </application>
     <queries>

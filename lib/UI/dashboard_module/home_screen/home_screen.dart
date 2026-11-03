@@ -10,6 +10,7 @@ import 'package:get/get_core/src/get_main.dart';
 import 'package:intl/intl.dart';
 
 import '../../../data/controllers/auth_controller/auth_controller.dart';
+import '../../../data/controllers/socket_controller.dart';
 import '../../../screens/paid_home_screen_v2.dart';
 import '../../../screens/unpaid_home_screen_v2.dart';
 import '../../../values/constants.dart';
@@ -42,12 +43,33 @@ class HomeScreen extends StatelessWidget {
           // wouldn't trigger a re-render and the user would stay stuck on
           // the unpaid home until the next cold start.
           final _ = authController.isPaid.value;
+          final __ = homeController.userHomeLoad.value; // rebuild when plans load
+          final ___ = homeController.trialChecked.value;
           if (authController.loginAsA.value == Constants.user) {
             final user = authController.logInUser;
-            if (user != null && user.status == true) {
+            // status can stay true after a free trial ends; with no real
+            // package (plans loaded) she gets the trial / unpaid home,
+            // same rule as Profile.
+            // (An admin-assigned "Free Trial" plan with days left still
+            // counts while it runs.)
+            final legacyTrialRunning = homeController.userHomeData?.userAllPlans.any(
+                    (p) => p.title.trim().toLowerCase() == 'free trial' && p.remainingDays > 0) ??
+                false;
+            final noRealPlan = homeController.hasRealPlan == false && !legacyTrialRunning;
+            if (user != null && user.status == true && !noRealPlan) {
               return const PaidHomeScreenV2();
             }
-            if (user != null && user.status == false) {
+            // Nov 2026: after logout + login, a woman on a free trial
+            // (status true, no paid package) briefly got the unpaid "plans"
+            // home until her trial loaded. Wait for it instead.
+            if (user != null &&
+                user.status == true &&
+                noRealPlan &&
+                !homeController.trialChecked.value &&
+                !(authController.trialActivated.value && homeController.trialLive.value)) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (user != null && (user.status == false || noRealPlan)) {
               // Free trial running (form done, AI plan created, 3 days
               // not up): give her the full paid home, with a trial banner
               // on top. Flips back to the unpaid home when the trial ends.
@@ -56,6 +78,12 @@ class HomeScreen extends StatelessWidget {
                 return const PaidHomeScreenV2();
               }
               return const UnpaidHomeScreenV2();
+            }
+            // During logout the user is cleared and SocketController is
+            // deleted a moment before we move to the Login screen. Don't
+            // build the old home in that gap (it needs SocketController).
+            if (user == null && !Get.isRegistered<SocketController>()) {
+              return const SizedBox.shrink();
             }
             return UserHomeScreen();
           } else if (authController.loginAsA.value == Constants.dietitian) {

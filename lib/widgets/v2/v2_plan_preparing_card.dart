@@ -47,7 +47,7 @@ class V2PlanPreparingCard extends StatelessWidget {
 
   String get _dueText {
     final d = info.dueAt;
-    if (d == null) return 'within 48 hours';
+    if (d == null) return 'within 2 working days';
     final now = DateTime.now();
     final isToday =
         d.year == now.year && d.month == now.month && d.day == now.day;

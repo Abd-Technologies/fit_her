@@ -84,12 +84,57 @@ class PersonalDetailsScreen extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               _editButton(),
+              const SizedBox(height: 28),
+              // Oct 2026: moved here from the main Profile screen (it sat
+              // right under "Sign out", too easy to hit by mistake).
+              _deleteAccount(),
               const SizedBox(height: 24),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Widget _deleteAccount() {
+    return Column(children: [
+      Container(height: 1, color: const Color(0xFFE6EEE2)),
+      const SizedBox(height: 14),
+      const Text(
+        'Delete your account and all your data. This can\'t be undone.',
+        textAlign: TextAlign.center,
+        style: TextStyle(fontFamily: 'Poppins', fontSize: 11.5, color: Color(0xFF8A9A88), height: 1.4),
+      ),
+      TextButton(
+        onPressed: () => Get.defaultDialog(
+          title: 'Delete your account?',
+          content: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              'Your profile, plan history and progress will be removed. This can\'t be undone.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+          textConfirm: 'Delete',
+          textCancel: 'Keep my account',
+          confirmTextColor: Colors.white,
+          buttonColor: const Color(0xFFC24A4A),
+          onConfirm: () {
+            Get.back();
+            authController.deleteUser();
+          },
+        ),
+        child: const Text(
+          'Delete account',
+          style: TextStyle(
+            fontFamily: 'Poppins',
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFFC24A4A),
+          ),
+        ),
+      ),
+    ]);
   }
 
   Widget _topBar() {

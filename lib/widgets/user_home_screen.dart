@@ -36,7 +36,7 @@ import 'package:fitness_zone_2/widgets/insight_card.dart';
 import 'package:fitness_zone_2/widgets/checkin_prompt.dart';
 import 'package:fitness_zone_2/widgets/weekly_report_progress.dart';
 import 'package:fitness_zone_2/UI/auth_module/daily_checkin_screen.dart';
-import 'package:fitness_zone_2/UI/auth_module/cycle_settings_screen.dart';
+import 'package:fitness_zone_2/UI/auth_module/log_period_screen.dart';
 import 'package:fitness_zone_2/UI/dashboard_module/recommended_slots_screen.dart';
 import 'package:fitness_zone_2/data/Repos/cycle_repo/cycle_data_repository.dart';
 import 'package:fitness_zone_2/data/Repos/checkin_repo/checkin_repository.dart';
@@ -220,7 +220,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                   insight: _insight!,
                   accuracyPercent: _accuracyPercent,
                   onViewSessions: () => Get.to(() => const RecommendedSlotsScreen()),
-                  onAddCycleData: () => Get.to(() => const CycleSettingsScreen()),
+                  onAddCycleData: () => Get.to(() => const LogPeriodScreen()),
                 ),
               ),
             // Phase 2: Check-in Prompt

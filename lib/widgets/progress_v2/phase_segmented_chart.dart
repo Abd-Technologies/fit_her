@@ -152,6 +152,10 @@ class PhaseSegmentedChart extends StatelessWidget {
       ];
       series.add(
         RangeAreaSeries<_BandPoint, DateTime>(
+          // No series animation (Oct 2026): Syncfusion's fade-in threw
+          // "A disposed RenderObject was mutated" when the chart left the
+          // screen mid-animation (Progress tab rebuilds). Small chart, no loss.
+          animationDuration: 0,
           name: 'phase_${s.phase}_$i',
           dataSource: data,
           xValueMapper: (p, _) => p.x,
@@ -233,6 +237,10 @@ class PhaseSegmentedChart extends StatelessWidget {
           // 2. Actual weight line.
           if (hasHistory)
             LineSeries<WeightPoint, DateTime>(
+          // No series animation (Oct 2026): Syncfusion's fade-in threw
+          // "A disposed RenderObject was mutated" when the chart left the
+          // screen mid-animation (Progress tab rebuilds). Small chart, no loss.
+          animationDuration: 0,
               name: 'weight',
               dataSource: history,
               xValueMapper: (p, _) => p.date,
@@ -249,6 +257,10 @@ class PhaseSegmentedChart extends StatelessWidget {
           // 3. Today dot — emphasised marker on the most recent point.
           if (hasHistory)
             ScatterSeries<WeightPoint, DateTime>(
+          // No series animation (Oct 2026): Syncfusion's fade-in threw
+          // "A disposed RenderObject was mutated" when the chart left the
+          // screen mid-animation (Progress tab rebuilds). Small chart, no loss.
+          animationDuration: 0,
               name: 'today',
               dataSource: [history.last],
               xValueMapper: (p, _) => p.date,
@@ -269,6 +281,10 @@ class PhaseSegmentedChart extends StatelessWidget {
           // 4. Dashed projection line.
           if (hasProjection)
             LineSeries<WeightPoint, DateTime>(
+          // No series animation (Oct 2026): Syncfusion's fade-in threw
+          // "A disposed RenderObject was mutated" when the chart left the
+          // screen mid-animation (Progress tab rebuilds). Small chart, no loss.
+          animationDuration: 0,
               name: 'projection',
               dataSource: projection!,
               xValueMapper: (p, _) => p.date,

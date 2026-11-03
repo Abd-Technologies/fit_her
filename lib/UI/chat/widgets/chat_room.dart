@@ -14,6 +14,7 @@ import '../../../../values/constants.dart';
 import '../../../../values/my_colors.dart';
 import '../../../../widgets/app_bar_widget.dart';
 import '../../../../widgets/toasts.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class ChatRoom extends StatefulWidget {
   final String chatRoomId;
@@ -83,7 +84,11 @@ class _ChatRoomState extends State<ChatRoom>
       required String firstName,
       required String lastName,
       bool isMe = false,
+      String? roomId,
       required String deviceToke}) async {
+    // roomId is saved on both list entries so the web portal opens the
+    // exact same room (the id is built from String.hashCode, which differs
+    // between phone and web).
     if (isAvailable) {
       Get.log("User is available");
       await _firestore
@@ -91,7 +96,10 @@ class _ChatRoomState extends State<ChatRoom>
           .doc(collectionId)
           .collection("myusers")
           .doc(userId)
-          .update({"newMessageArrived": isMe ? false : true});
+          .update({
+        "newMessageArrived": isMe ? false : true,
+        if (roomId != null && roomId.isNotEmpty) "roomId": roomId,
+      });
     } else {
       await _firestore
           .collection("users")
@@ -105,7 +113,8 @@ class _ChatRoomState extends State<ChatRoom>
         "remoteId": 0,
         "days": "",
         "newMessageArrived": isMe ? false : true,
-        "deviceToken": deviceToke
+        "deviceToken": deviceToke,
+        if (roomId != null && roomId.isNotEmpty) "roomId": roomId,
       });
     }
   }
@@ -125,6 +134,7 @@ class _ChatRoomState extends State<ChatRoom>
           isAvailable: isAvailableOther,
           firstName: login.firstName,
           lastName: login.lastName,
+          roomId: widget.chatRoomId,
           deviceToke: authController.sharedPreferences
                   .getString(Constants.deviceToken) ??
               "");
@@ -135,6 +145,7 @@ class _ChatRoomState extends State<ChatRoom>
           firstName: widget.userMap["name"].split(" ").first ?? "",
           lastName: widget.userMap["name"].split(" ").last ?? "",
           isMe: true,
+          roomId: widget.chatRoomId,
           deviceToke: widget.userMap["deviceToken"] ?? "");
     } catch (e) {
       Get.log("Error: $e");
@@ -169,7 +180,8 @@ class _ChatRoomState extends State<ChatRoom>
             Get.find<AuthController>().sendMessageNotifications({
               "title": "A new message arrived",
               "body": _message.text,
-              "deviceToken": widget.userMap["deviceToken"]
+              "deviceToken": widget.userMap["deviceToken"],
+              "toUserId": widget.userMap["id"],
             });
             _message.clear();
           }
@@ -253,7 +265,7 @@ class _ChatRoomState extends State<ChatRoom>
                           );
                         } else {
                           return const Center(
-                              child: CircularProgressIndicator());
+                              child: FhLoader());
                         }
                       },
                     ),

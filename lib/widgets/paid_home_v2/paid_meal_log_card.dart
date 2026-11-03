@@ -588,7 +588,7 @@ class _StructuredMealRow extends StatelessWidget {
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
-                  meal.time,
+                  _mealTime12h(meal.time),
                   style: const TextStyle(
                     fontFamily: 'Poppins',
                     fontSize: 10,
@@ -674,4 +674,16 @@ class _StatusDot extends StatelessWidget {
       child: Icon(icon, color: Colors.white, size: 14),
     );
   }
+}
+
+/// "13:30" -> "1:30 PM" (same as the Diet tab's meal cards).
+String _mealTime12h(String hhmm) {
+  final parts = hhmm.split(':');
+  if (parts.length < 2) return hhmm;
+  final h = int.tryParse(parts[0]);
+  if (h == null) return hhmm;
+  final m = parts[1].padLeft(2, '0').substring(0, 2);
+  final suffix = h >= 12 ? 'PM' : 'AM';
+  final h12 = h % 12 == 0 ? 12 : h % 12;
+  return '$h12:$m $suffix';
 }

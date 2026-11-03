@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:get/get.dart';
 
 import '../../data/controllers/cycle_theme_controller/cycle_theme_controller.dart';
 import '../../data/services/cycle_engine.dart';
+import '../anim/motion.dart';
 import 'hero_coming_up_row.dart';
 import 'hero_greeting_block.dart';
-import 'hero_live_section.dart';
+import 'hero_class_section.dart';
 import 'hero_top_bar.dart';
 import 'phase_theme.dart';
 
@@ -95,8 +97,9 @@ class HomeHero extends StatelessWidget {
                   ),
                 ),
               ),
-              // 3. Content
-              SizedBox(
+              // 3. Content (animation pass #6: fades in once when the
+              // hero first appears; the green background stays put).
+              _fadeInOnce(context, SizedBox(
                 width: double.infinity,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -121,16 +124,22 @@ class HomeHero extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const HeroLiveSection(),
-                    HeroComingUpRow(upcoming: upcomingSlots, onTap: onWorkoutTap),
+                    // Real class card + Coming Up tiles, same as the paid
+                    // home ("Try free →" until the trial is started).
+                    HeroClassSection(theme: phaseTheme),
                   ],
                 ),
-              ),
+              )),
             ],
           ),
         ),
       ),
     );
     }); // closes Obx
+  }
+
+  Widget _fadeInOnce(BuildContext context, Widget child) {
+    if (Motion.calm(context)) return child;
+    return child.animate().fadeIn(duration: Motion.normal, curve: Motion.ease);
   }
 }

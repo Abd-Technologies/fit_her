@@ -11,8 +11,13 @@ import 'package:get/get.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../../data/models/add_package/add_package_model.dart';
+import '../../data/api_provider/api_provider.dart';
+import '../../values/constants.dart';
 import '../../values/my_colors.dart';
+import '../../widgets/toasts.dart';
 import '../../widgets/custom_textfield.dart';
+import '../../widgets/class_option_picker.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class AddTrainerSlots extends StatelessWidget {
   AddTrainerSlots({super.key});
@@ -479,30 +484,29 @@ class AddTrainerSlots extends StatelessWidget {
                                                 // mid-animation resize that
                                                 // broke layout before).
                                                 const SizedBox(height: 10),
-                                                CustomTextField(
-                                                  keyboardType:
-                                                      TextInputType.text,
-                                                  text: "Class Type".tr,
-                                                  length: 30,
+                                                // Picked from fixed options
+                                                // (same list as the trainer's
+                                                // Class Details screen) so the
+                                                // spelling always matches the
+                                                // client screens' colours.
+                                                ClassOptionPicker(
+                                                  key: ObjectKey(
+                                                      slot.typeController),
+                                                  label: "Class type",
+                                                  options: kClassTypeOptions,
                                                   controller:
                                                       slot.typeController,
-                                                  inputFormatters:
-                                                      FilteringTextInputFormatter
-                                                          .singleLineFormatter,
-                                                  validator: (value) => null,
+                                                  allowOther: true,
                                                 ),
-                                                const SizedBox(height: 10),
-                                                CustomTextField(
-                                                  keyboardType:
-                                                      TextInputType.text,
-                                                  text: "Intensity Level".tr,
-                                                  length: 30,
+                                                const SizedBox(height: 14),
+                                                ClassOptionPicker(
+                                                  key: ObjectKey(
+                                                      slot.levelController),
+                                                  label: "Intensity",
+                                                  options:
+                                                      kClassIntensityOptions,
                                                   controller:
                                                       slot.levelController,
-                                                  inputFormatters:
-                                                      FilteringTextInputFormatter
-                                                          .singleLineFormatter,
-                                                  validator: (value) => null,
                                                 ),
                                                 const SizedBox(height: 10),
                                                 CustomTextField(
@@ -529,7 +533,12 @@ class AddTrainerSlots extends StatelessWidget {
                                       width: 10,
                                     ),
                                     timeIndex == dayTime.slots.length - 1
-                                        ? GestureDetector(
+                                        ? Column(mainAxisSize: MainAxisSize.min, children: [
+                                          if (slot.id != null) ...[
+                                            _deleteButton(context, dayTime, slot),
+                                            const SizedBox(height: 8),
+                                          ],
+                                          GestureDetector(
                                             onTap: () {
                                               dayTime.slots.add(Slot(
                                                   trainerId: null,
@@ -553,8 +562,10 @@ class AddTrainerSlots extends StatelessWidget {
                                                 color: MyColors.buttonColor,
                                               ),
                                             ),
-                                          )
-                                        : GestureDetector(
+                                          )])
+                                        : slot.id != null
+                                            ? _deleteButton(context, dayTime, slot)
+                                            : GestureDetector(
                                             onTap: () {
                                               dayTime.slots
                                                   .removeAt(timeIndex);
@@ -594,5 +605,49 @@ class AddTrainerSlots extends StatelessWidget {
         workOutController.addTrainerSlots();
       }),
     );
+  }
+
+  /// Red bin for a saved slot: deletes it on the server (it leaves the
+  /// timetable for everyone; past attendance and ratings stay).
+  Widget _deleteButton(BuildContext context, Time dayTime, Slot slot) => GestureDetector(
+        onTap: () => _deleteSavedSlot(context, dayTime, slot),
+        child: Container(
+          height: 40.h,
+          width: 40.h,
+          decoration: BoxDecoration(
+              shape: BoxShape.circle, border: Border.all(color: const Color(0xFFC24A4A), width: 2)),
+          child: const Icon(Icons.delete_outline_rounded, color: Color(0xFFC24A4A), size: 20),
+        ),
+      );
+
+  Future<void> _deleteSavedSlot(BuildContext context, Time dayTime, Slot slot) async {
+    final sure = await Get.dialog<bool>(AlertDialog(
+      title: const Text('Delete this class slot?'),
+      content: Text('${dayTime.day} ${slot.start} - ${slot.end} will be removed from the timetable for everyone. '
+          'Women booked into it will no longer see it. Past attendance and ratings are kept.'),
+      actions: [
+        TextButton(onPressed: () => Get.back(result: false), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Get.back(result: true),
+          child: const Text('Delete slot', style: TextStyle(color: Color(0xFFC24A4A), fontWeight: FontWeight.w700)),
+        ),
+      ],
+    ));
+    if (sure != true) return;
+    Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
+    final r = await Get.find<ApiProvider>().postData('/admin/slots/${slot.id}/delete',
+        body: {}, headers: {'accessToken': home.sharedPreferences.getString(Constants.accessToken) ?? ''});
+    Get.back();
+    final b = r.body;
+    if (b is Map && '${b['status']}' == '1') {
+      dayTime.slots.remove(slot);
+      if (dayTime.slots.isEmpty) {
+        dayTime.slots.add(Slot(trainerId: null, id: null, dayId: dayTime.id, start: "Start Time", end: "End Time"));
+      }
+      workOutController.update();
+      CustomToast.successToast(msg: 'Slot deleted');
+    } else {
+      CustomToast.failToast(msg: b is Map ? b['message'] : "Couldn't delete. Please try again.");
+    }
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 
 import 'package:fitness_zone_2/data/controllers/home_controller/home_controller.dart';
 import 'package:fitness_zone_2/data/controllers/paid_home_controller/paid_home_controller.dart';
@@ -17,6 +18,8 @@ import 'auth_controller/auth_controller.dart';
 import 'socket_time_block.dart';
 
 class SocketController extends GetxController {
+  // Last class notice shown from the live connection (see slotUpdate).
+  static const String _kLastSlotNotice = 'socket_last_slot_notice';
   final Map<String, DateTime> _recentLikeEvents = {};
   IO.Socket? socket;
 
@@ -35,22 +38,22 @@ class SocketController extends GetxController {
   }
 
   void joinCommunity() {
-    print('SocketController.joinCommunity');
+    debugPrint('SocketController.joinCommunity');
     socket?.emit("joinCommunity");
   }
 
   void leaveCommunity() {
-    print('SocketController.leaveCommunity');
+    debugPrint('SocketController.leaveCommunity');
     socket?.emit("leaveCommunity");
   }
 
   void joinPost(int postId) {
-    print('SocketController.joinPost $postId');
+    debugPrint('SocketController.joinPost $postId');
     socket?.emit("joinPost", postId);
   }
 
   void leavePost(int postId) {
-    print('SocketController.leavePost $postId');
+    debugPrint('SocketController.leavePost $postId');
     socket?.emit("leavePost", postId);
   }
 
@@ -67,32 +70,58 @@ class SocketController extends GetxController {
 
     socket?.connect();
     socket?.onConnect((c) {
-      print('SocketController.onConnect ${socket?.id}');
+      debugPrint('SocketController.onConnect ${socket?.id}');
       socket?.emit("getSlot", {"id": Get.find<AuthController>().logInUser?.id});
     });
     socket?.onConnectError((error) {
-      print('SocketController.onConnectError $error');
+      debugPrint('SocketController.onConnectError $error');
     });
     socket?.onError((error) {
-      print('SocketController.onError $error');
+      debugPrint('SocketController.onError $error');
     });
     socket?.onDisconnect((reason) {
-      print('SocketController.onDisconnect $reason');
+      debugPrint('SocketController.onDisconnect $reason');
     });
     socket?.on("slotUpdate", (message) {
       if (message == null) return;
 
-      final upcomingClassSlot = UpcomingClassSlot(
-        upcomingSlot: Slot.fromJson(jsonDecode(message["upcomingSlot"])),
-        trainer: ClientUser.fromJson(jsonDecode(message["trainer"])),
-      );
+      // Defensive: a missing/null trainer used to throw here and skip the
+      // whole update (the screen then never refreshed).
+      final UpcomingClassSlot upcomingClassSlot;
+      try {
+        final rawTrainer = message["trainer"] == null
+            ? null
+            : jsonDecode(message["trainer"].toString());
+        upcomingClassSlot = UpcomingClassSlot(
+          upcomingSlot: Slot.fromJson(jsonDecode(message["upcomingSlot"])),
+          trainer: rawTrainer is Map<String, dynamic>
+              ? ClientUser.fromJson(rawTrainer)
+              : null,
+        );
+      } catch (e) {
+        debugPrint('[socket] slotUpdate parse failed: $e');
+        _silentRefreshSchedule();
+        return;
+      }
 
       // Always update UI so she can see the class on screen
       homeController.upComingClassNotifier.value = upcomingClassSlot;
 
-      // Only fire a local notification if the slot falls in her preferred time block
+      // Only fire a local notification if the slot falls in her preferred
+      // time block, AND only when something really changed (Oct 2026):
+      // the server answers every (re)connect with the current slot, so the
+      // same "class confirmed" notification used to pop up on every app
+      // open / network reconnect. The last one shown is remembered on the
+      // phone (class + status + today), so each change notifies once.
       final slot = upcomingClassSlot.upcomingSlot;
-      if (slot != null && _isInPreferredTimeBlock(slot.start)) {
+      final now = DateTime.now();
+      final changeKey =
+          '${slot?.id}|${slot?.status}|${now.year}-${now.month}-${now.day}';
+      final prefs = Get.find<AuthController>().sharedPreferences;
+      final lastKey = prefs.getString(_kLastSlotNotice);
+      final isChange = lastKey != null && lastKey != changeKey;
+      prefs.setString(_kLastSlotNotice, changeKey);
+      if (isChange && slot != null && _isInPreferredTimeBlock(slot.start)) {
         final notifServices = Get.find<NotificationServices>();
         // Reuse the existing addNotification-style local push via RemoteMessage-like data.
         // Since we're coming from socket (not FCM), we show a local notification directly.
@@ -110,7 +139,7 @@ class SocketController extends GetxController {
     });
 
     socket?.on("newPost", (message) {
-      print('SocketController.newPost $message');
+      debugPrint('SocketController.newPost $message');
       if (message != null) {
         var post = Post.fromJson(message);
         if (post.approved) {
@@ -125,21 +154,20 @@ class SocketController extends GetxController {
     });
 
     socket?.on("replyWithUser", (message) {
-      print('SocketController.replyWithUser $message');
+      debugPrint('SocketController.replyWithUser $message');
       if (message != null) {
         final post = Get.find<PostController>().postsList.firstWhereOrNull((p) => p.id == message["postId"]);
         if (post != null) {
           final reply = Reply.fromJson(message);
           final alreadyExists = post.replies.any((r) => r.id == reply.id);
-          if (!alreadyExists) {
-            post.replies.add(reply);
-            Get.find<PostController>().postsList.refresh();
-          }
+          // RxList: only this post's widgets update (Oct 2026: was a
+          // full feed rebuild for every reply anyone wrote).
+          if (!alreadyExists) post.replies.add(reply);
         }
       }
     });
     socket?.on("replyCreated", (message) {
-      print('SocketController.replyCreated $message');
+      debugPrint('SocketController.replyCreated $message');
       if (message != null) {
         final dynamic postIdValue = message["postId"];
         final int? postId = postIdValue is int ? postIdValue : int.tryParse(postIdValue.toString());
@@ -151,10 +179,7 @@ class SocketController extends GetxController {
         if (post != null) {
           final reply = Reply.fromJson(replyJson);
           final alreadyExists = post.replies.any((r) => r.id == reply.id);
-          if (!alreadyExists) {
-            post.replies.add(reply);
-            Get.find<PostController>().postsList.refresh();
-          }
+          if (!alreadyExists) post.replies.add(reply);
         }
       }
     });
@@ -166,8 +191,8 @@ class SocketController extends GetxController {
       final liked = message["like"] == true;
       final who = '${message["userId"]}';
       // Our own likes are already applied on tap (PostController.likePost).
-      final me = Get.find<AuthController>().logInUser?.id;
-      if (who.isNotEmpty && who != 'null' && who == '$me') return;
+      final me = Get.find<AuthController>().myId;
+      if (who.isNotEmpty && who != 'null' && who == me) return;
       // The server sends the same event to the feed room and the post room;
       // count it once.
       final key = '$postId:$who:$liked';
@@ -178,12 +203,12 @@ class SocketController extends GetxController {
       final pc = Get.find<PostController>();
       final post = pc.postsList.firstWhereOrNull((p) => p.id == postId);
       if (post != null) {
+        // likesCount is reactive: only this heart updates.
         if (liked) {
           post.likesCount.value++;
         } else if (post.likesCount.value > 0) {
           post.likesCount.value--;
         }
-        pc.postsList.refresh();
       }
     });
 

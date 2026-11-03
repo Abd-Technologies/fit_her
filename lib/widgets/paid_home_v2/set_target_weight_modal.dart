@@ -69,6 +69,22 @@ class _SetTargetWeightModalState extends State<SetTargetWeightModal> {
   }
 
   Future<void> _onSave() async {
+    // A target the wrong way for her goal is refused (server checks too).
+    final now = widget.dashboard.goal?.currentWeightKg;
+    if (now != null && now > 0) {
+      String? msg;
+      if (_direction == 'lose' && _selectedKg >= now) {
+        msg = 'To lose weight, pick a target below your current weight (${now.toStringAsFixed(1)} kg).';
+      } else if (_direction == 'gain' && _selectedKg <= now) {
+        msg = 'To gain weight, pick a target above your current weight (${now.toStringAsFixed(1)} kg).';
+      }
+      if (msg != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(msg), duration: const Duration(seconds: 3)),
+        );
+        return;
+      }
+    }
     final controller = Get.find<PaidHomeController>();
     final success = await controller.saveTargetWeight(
       _selectedKg,

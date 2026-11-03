@@ -61,6 +61,8 @@ class Reply {
   final DateTime createdAt;
   final ClientUser? user;
   final FeedAuthor author;
+  // Oct 2026: shown at once while it is being sent ("Sending…").
+  final bool pending;
 
   Reply({
     required this.id,
@@ -71,6 +73,7 @@ class Reply {
     required this.createdAt,
     this.user,
     this.author = const FeedAuthor(name: 'Member'),
+    this.pending = false,
   });
 
   factory Reply.fromJson(Map<String, dynamic> json) {
@@ -172,8 +175,7 @@ class Post {
           (json['likes'] is List &&
               (json['likes'] as List).any((l) =>
                   l is Map &&
-                  '${l['userId']}' ==
-                      '${Get.find<AuthController>().logInUser?.id}'))),
+                  '${l['userId']}' == Get.find<AuthController>().myId))),
       replies: json['messages'] == null
           ? <Reply>[].obs
           : (json['messages'] as List).map((e) => Reply.fromJson(e)).toList().obs, // convert List<Reply> to RxList<Reply>

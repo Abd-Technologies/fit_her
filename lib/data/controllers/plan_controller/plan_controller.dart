@@ -16,6 +16,7 @@ import '../../models/api_response/api_response_model.dart';
 import '../../models/get_all_cat_plan/get_all_categories.dart';
 import '../../models/get_all_cat_plan/get_all_sub_cat.dart';
 import '../../models/get_user_plan/get_user_plan.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class PlanController extends GetxController implements GetxService {
   SharedPreferences sharedPreferences;
@@ -66,7 +67,7 @@ class PlanController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()),
+        Get.dialog(const Center(child: FhLoader()),
             barrierDismissible: false);
         await homeRepo.addCountry(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
@@ -105,7 +106,7 @@ class PlanController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()),
+        Get.dialog(const Center(child: FhLoader()),
             barrierDismissible: false);
         await homeRepo.addTimeDuration(
           accessToken: sharedPreferences.getString(Constants.accessToken) ?? "",
@@ -307,7 +308,7 @@ class PlanController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()),
+        Get.dialog(const Center(child: FhLoader()),
             barrierDismissible: false);
         await homeRepo
             .addPlanRepo(
@@ -348,7 +349,7 @@ class PlanController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()),
+        Get.dialog(const Center(child: FhLoader()),
             barrierDismissible: false);
         await homeRepo
             .updatePlanRepo(
@@ -390,7 +391,7 @@ class PlanController extends GetxController implements GetxService {
         CustomToast.noInternetToast();
         // Get.back();
       } else {
-        Get.dialog(const Center(child: CircularProgressIndicator()),
+        Get.dialog(const Center(child: FhLoader()),
             barrierDismissible: false);
         await homeRepo
             .addDietitionPlan(

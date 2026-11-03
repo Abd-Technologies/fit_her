@@ -94,6 +94,13 @@ class Slot {
   String end;
   String? trainerLink;
   ClientUser? trainer;
+  /// Trainer's full name (analytics / presence logging). Null if unknown.
+  String? get trainerName {
+    final t = trainer;
+    if (t == null) return null;
+    final n = '${t.firstName} ${t.lastName}'.trim();
+    return n.isEmpty ? null : n;
+  }
   String? type;
   String? level;
   String? description;

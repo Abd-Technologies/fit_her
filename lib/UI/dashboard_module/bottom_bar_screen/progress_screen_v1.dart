@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:fitness_zone_2/UI/dashboard_module/measurement_screen/measurement_screen.dart';
 import 'package:fitness_zone_2/data/controllers/auth_controller/auth_controller.dart';
 import 'package:fitness_zone_2/helper/analytics_helper.dart';
+import 'package:fitness_zone_2/helper/private_file_url.dart';
 import 'package:fitness_zone_2/data/controllers/progress_controller/progress_controller.dart';
 import 'package:fitness_zone_2/values/constants.dart';
 import 'package:fitness_zone_2/values/my_imgs.dart';
@@ -228,7 +229,7 @@ class ProgressScreenV1 extends StatelessWidget {
                                 ],
                                 image: DecorationImage(
                                     image: NetworkImage(
-                                      "${Constants.baseUrl}/${imagePath!}",
+                                      privateFileUrl(imagePath!),
                                     ),
                                     fit: BoxFit.cover)),
                             // child: Center(

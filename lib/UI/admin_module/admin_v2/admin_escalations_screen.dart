@@ -9,7 +9,11 @@ import '../../../widgets/toasts.dart';
 /// acknowledged / resolved) and trigger. Tap a tile to expand and see
 /// the payload + Resolve button.
 class AdminEscalationsScreen extends StatefulWidget {
-  const AdminEscalationsScreen({Key? key}) : super(key: key);
+  /// Same screen for admin (all tickets) and a dietitian (the server
+  /// only returns tickets about her own clients); only the title differs.
+  final String title;
+  const AdminEscalationsScreen({Key? key, this.title = 'Escalations'})
+      : super(key: key);
 
   @override
   State<AdminEscalationsScreen> createState() =>
@@ -34,11 +38,14 @@ class _AdminEscalationsScreenState extends State<AdminEscalationsScreen> {
     (null, 'All'),
     ('PLAN_DELAYED', 'Plan delayed'),
     ('CONSULT_NO_SHOW', 'No-show'),
+    ('CONSULT_CLIENT_NO_SHOW', 'Client missed'),
     ('INACTIVITY', 'Inactivity'),
     ('MEDICAL', 'Medical'),
     ('REVIEW_FLAG', 'Review flag'),
     ('BOOKING_REMINDER_5X', 'Booking 5×'),
     ('SYSTEM_ISSUE', 'System'),
+    ('DIET_CHECKIN_HELP', 'Needs help (diet)'),
+    ('DIETITIAN_EMERGENCY_DAY', 'Emergency day'),
   ];
 
   @override
@@ -74,6 +81,43 @@ class _AdminEscalationsScreenState extends State<AdminEscalationsScreen> {
       CustomToast.successToast(msg: 'Resolved');
       _load();
     }
+  }
+
+  /// Booking-locked client (second missed session): unlock her booking
+  /// and close the ticket in one step.
+  Future<void> _unlock(EscalationTicket t) async {
+    final planId = int.tryParse('${t.payload?['userPlanId'] ?? ''}');
+    if (planId == null) return;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Unlock booking?',
+            style: TextStyle(fontFamily: 'Poppins', fontWeight: FontWeight.w700)),
+        content: const Text(
+          'She will be able to book her own sessions again, and her one free '
+          'late change on this package is given back.',
+          style: TextStyle(fontFamily: 'Poppins', fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Not now')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Unlock')),
+        ],
+      ),
+    );
+    if (yes != true) return;
+    final ok = await _ctrl.resetBookingPass(planId);
+    if (!ok || !mounted) return;
+    await _ctrl.resolveEscalation(
+      ticketId: t.id ?? 0,
+      resolutionNote: 'Booking unlocked.',
+    );
+    if (!mounted) return;
+    CustomToast.successToast(msg: 'Booking unlocked');
+    _load();
   }
 
   Future<String?> _promptResolutionNote() async {
@@ -177,8 +221,8 @@ class _AdminEscalationsScreenState extends State<AdminEscalationsScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         iconTheme: const IconThemeData(color: Color(0xFF1A3A22)),
-        title: const Text(
-          'Escalations',
+        title: Text(
+          widget.title,
           style: TextStyle(
             fontFamily: 'Poppins',
             fontSize: 16,
@@ -233,11 +277,16 @@ class _AdminEscalationsScreenState extends State<AdminEscalationsScreen> {
                           itemCount: _tickets.length,
                           itemBuilder: (_, i) {
                             final t = _tickets[i];
+                            final canUnlock = t.status != 'resolved' &&
+                                t.trigger == 'CONSULT_CLIENT_NO_SHOW' &&
+                                t.payload?['bookingLocked'] == true &&
+                                t.payload?['userPlanId'] != null;
                             return _TicketTile(
                               ticket: t,
                               onResolve: t.status == 'resolved'
                                   ? null
                                   : () => _resolve(t),
+                              onUnlock: canUnlock ? () => _unlock(t) : null,
                             );
                           },
                         ),
@@ -358,10 +407,91 @@ class _Pill extends StatelessWidget {
   }
 }
 
+/// Google Meet check for the session this ticket is about, so a
+/// disputed no-show can be settled: who actually joined the call.
+class _AttendanceBox extends StatelessWidget {
+  final Map<String, dynamic> attendance;
+  const _AttendanceBox({required this.attendance});
+
+  String _who(String label, dynamic v) => v == true
+      ? '$label joined'
+      : v == false
+          ? "$label didn't join"
+          : '$label: unknown';
+
+  @override
+  Widget build(BuildContext context) {
+    final checked = attendance['checked'] == true;
+    final people = (attendance['participants'] is List)
+        ? (attendance['participants'] as List)
+            .whereType<Map>()
+            .map((p) => '${p['name'] ?? '?'}')
+            .toList()
+        : <String>[];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEAF7E4),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFD8EDD4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            attendance['source'] == 'google' ? 'Attendance · Google Meet' : 'Attendance',
+            style: TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF1A3A22),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            checked
+                ? '${_who('Dietitian', attendance['dietitianJoined'])} · '
+                    '${_who('Client', attendance['clientJoined'])}'
+                : 'Not checked yet (no Meet link, or the check has not run).',
+            style: const TextStyle(
+              fontFamily: 'Poppins',
+              fontSize: 11.5,
+              color: Color(0xFF1A3A22),
+            ),
+          ),
+          // Oct 2026: how it was decided (Google or app taps), with times.
+          if ('${attendance['summary'] ?? ''}'.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              '${attendance['summary']}',
+              style: const TextStyle(fontFamily: 'Poppins', fontSize: 11, color: Color(0xFF3E8E36)),
+            ),
+          ],
+          if (people.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              'In the call: ${people.join(', ')}',
+              style: const TextStyle(
+                fontFamily: 'Poppins',
+                fontSize: 11,
+                color: Color(0xFF7A8C78),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _TicketTile extends StatelessWidget {
   final EscalationTicket ticket;
   final VoidCallback? onResolve;
-  const _TicketTile({required this.ticket, required this.onResolve});
+  // Only for booking-locked clients: unlock booking + close ticket.
+  final VoidCallback? onUnlock;
+  const _TicketTile(
+      {required this.ticket, required this.onResolve, this.onUnlock});
 
   @override
   Widget build(BuildContext context) {
@@ -431,6 +561,10 @@ class _TicketTile extends StatelessWidget {
                   ),
                 ),
               ),
+            if (ticket.attendance != null) ...[
+              const SizedBox(height: 8),
+              _AttendanceBox(attendance: ticket.attendance!),
+            ],
             const SizedBox(height: 8),
             Row(
               children: [
@@ -446,6 +580,30 @@ class _TicketTile extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (onUnlock != null) ...[
+                  OutlinedButton(
+                    onPressed: onUnlock,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF1A3A22),
+                      side: const BorderSide(color: Color(0xFF6DC55A)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      minimumSize: const Size(0, 32),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'Unlock booking',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 if (onResolve != null)
                   ElevatedButton(
                     onPressed: onResolve,

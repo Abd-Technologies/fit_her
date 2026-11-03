@@ -37,8 +37,10 @@ class HomeRepo extends GetxService {
   }
 
   Future<Response> getAppointments(
-      {required String accessToken, required String userId}) async {
+      {required String accessToken, required String userId, int recentDays = 0}) async {
+    // Nov 2026: recentDays > 0 also returns finished calls of the last days.
     return await apiProvider.getData("${Constants.getAppointments}/$userId",
+        query: recentDays > 0 ? {'recentDays': '$recentDays'} : null,
         headers: {"accessToken": accessToken});
   }
 
@@ -551,9 +553,10 @@ class HomeRepo extends GetxService {
   Future<Response> getTrialSummary({
     required String accessToken,
     required String country,
+    bool peek = false,
   }) async {
     return await apiProvider.getData(
-      '${Constants.trialSummary}?country=${Uri.encodeQueryComponent(country)}',
+      '${Constants.trialSummary}?country=${Uri.encodeQueryComponent(country)}${peek ? '&peek=1' : ''}',
       headers: {"accessToken": accessToken},
     );
   }
@@ -1006,19 +1009,6 @@ class HomeRepo extends GetxService {
     );
   }
 
-  /// Reports the dietitian didn't show. Path: /appointment/:id/no-show.
-  Future<Response> reportConsultationNoShow({
-    required String accessToken,
-    required int appointmentId,
-    String? reason,
-  }) async {
-    return await apiProvider.postData(
-      "/appointment/$appointmentId${Constants.appointmentNoShowSuffix}",
-      body: {if (reason != null) "reason": reason},
-      headers: {"accessToken": accessToken},
-    );
-  }
-
   /// The signed-in user's own current active (pending/confirmed/In
   /// Progress) consultation booking, if any. Powers the Diet tab's
   /// "your booked consultation" card. Path: GET /appointment/me/current.
@@ -1038,6 +1028,24 @@ class HomeRepo extends GetxService {
     return await apiProvider.postData(
       "/appointment/$appointmentId/cancel",
       body: {},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Rates a completed consultation (1-5 stars + optional comment).
+  Future<Response> rateConsultation({
+    required String accessToken,
+    required int appointmentId,
+    required int rating,
+    String? comment,
+  }) async {
+    return await apiProvider.postData(
+      "/appointment/$appointmentId/review",
+      body: {
+        "rating": rating,
+        if (comment != null && comment.trim().isNotEmpty)
+          "comment": comment.trim(),
+      },
       headers: {"accessToken": accessToken},
     );
   }
@@ -1180,12 +1188,25 @@ class HomeRepo extends GetxService {
     );
   }
 
+  /// Dietitian view of how actively a client logged meals, one entry
+  /// per day for the last [days] days (oldest first).
+  Future<Response> adminGetClientMealActivity({
+    required String accessToken,
+    required int userId,
+    int days = 7,
+  }) async {
+    return await apiProvider.getData(
+      "/admin/diet-plan/user/$userId/meal-activity?days=$days",
+      headers: {"accessToken": accessToken},
+    );
+  }
+
   Future<Response> adminPatchPreConsultationProfile({
     required String accessToken,
     required int userId,
     required Map<String, dynamic> body,
   }) async {
-    return await apiProvider.putData(
+    return await apiProvider.patchData(
       "${Constants.adminPreConsultationProfile}/$userId",
       body: body,
       headers: {"accessToken": accessToken, "Content-Type": "application/json"},
@@ -1254,6 +1275,19 @@ class HomeRepo extends GetxService {
     return await apiProvider.postData(
       "${Constants.adminEscalations}/$ticketId/resolve",
       body: {if (resolutionNote != null) "resolutionNote": resolutionNote},
+      headers: {"accessToken": accessToken},
+    );
+  }
+
+  /// Clears a client's used late change and booking lock for one
+  /// package (change policy). Admin / her own dietitian only.
+  Future<Response> adminResetBookingPass({
+    required String accessToken,
+    required int userPlanId,
+  }) async {
+    return await apiProvider.postData(
+      "/admin/diet-plan/user-plan/$userPlanId/reset-booking-pass",
+      body: <String, dynamic>{},
       headers: {"accessToken": accessToken},
     );
   }

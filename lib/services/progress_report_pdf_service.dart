@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 
+import '../data/models/progress_v2/measurement_entry.dart';
 import '../data/models/progress_v2/progress_models.dart';
 import 'progress_report_pdf_builder.dart';
 
@@ -53,6 +54,8 @@ class ProgressReportPdfService {
     required SymptomsData symptoms,
     required InsightsHubData insights,
     String? userFullName,
+    // Weekly check-in measurements (WeeklyCheckinSheet.loadHistory()).
+    List<MeasurementEntry> measurements = const [],
   }) async {
     final doc = _builder.buildDocument(
       summary: summary,
@@ -61,6 +64,7 @@ class ProgressReportPdfService {
       symptoms: symptoms,
       insights: insights,
       userFullName: userFullName,
+      measurements: measurements,
     );
 
     final bytes = await doc.save();

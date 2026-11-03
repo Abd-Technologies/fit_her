@@ -49,16 +49,21 @@ class PaidInsightCard extends StatelessWidget {
         ),
         child: Stack(
           children: [
-            // Soft decorative circle, top right.
+            // Soft decorative circle, tucked further into the top-right
+            // corner (and a touch lighter) so it stays clear of the text
+            // and the "Today" label.
             Positioned(
-              top: -40,
-              right: -40,
-              child: Container(
-                width: 130,
-                height: 130,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Color(0xFFEAF7E4),
+              top: -65,
+              right: -65,
+              child: Opacity(
+                opacity: 0.7,
+                child: Container(
+                  width: 130,
+                  height: 130,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Color(0xFFEAF7E4),
+                  ),
                 ),
               ),
             ),
@@ -91,8 +96,8 @@ class PaidInsightCard extends StatelessWidget {
                         style: TextStyle(
                           fontFamily: 'Poppins',
                           fontSize: 9.5,
-                          fontWeight: FontWeight.w500,
-                          color: const Color(0xFF9AB09A),
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF6F8A6C),
                         ),
                       ),
                     ],

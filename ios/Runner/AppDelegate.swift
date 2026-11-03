@@ -1,4 +1,5 @@
 import UIKit
+import UserNotifications
 import Flutter
 import Firebase
 import MobileRTC
@@ -15,6 +16,11 @@ import MobileRTC
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         FirebaseApp.configure()
+        // flutter_local_notifications (README, iOS setup): needed so phone
+        // notifications show while the app is open and taps reach the app.
+        if #available(iOS 10.0, *) {
+            UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate
+        }
 
         let controller = window?.rootViewController as! FlutterViewController
         let channel = FlutterMethodChannel(name: CHANNEL, binaryMessenger: controller.binaryMessenger)

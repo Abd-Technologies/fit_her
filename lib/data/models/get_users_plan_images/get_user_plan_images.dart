@@ -40,12 +40,28 @@ class Datum {
   // remained). Treat as nullable instead of crashing the whole list parse.
   DurationModel? priceDuration;
 
+  // Slip check (server: helper/slipRules.js).
+  String? price;
+  num? ocrAmount;
+  String? ocrDate;
+  String? ocrTransactionId;
+  Map<String, dynamic>? ocrData;
+
+  String? get slipReason => ocrData?['approvalReason']?.toString();
+  Map<String, dynamic>? get slipAccount =>
+      ocrData?['account'] is Map ? Map<String, dynamic>.from(ocrData!['account']) : null;
+
   Datum({
     required this.id,
     required this.image,
     required this.user,
     required this.plan,
     required this.priceDuration,
+    this.price,
+    this.ocrAmount,
+    this.ocrDate,
+    this.ocrTransactionId,
+    this.ocrData,
   });
 
   factory Datum.fromJson(Map<String, dynamic> json) => Datum(
@@ -56,7 +72,23 @@ class Datum {
     priceDuration: json["PriceDuration"] == null
         ? null
         : DurationModel.fromJson(json["PriceDuration"]),
+    price: json["price"]?.toString(),
+    ocrAmount: json["ocrAmount"] is num ? json["ocrAmount"] : num.tryParse('${json["ocrAmount"] ?? ''}'),
+    ocrDate: json["ocrDate"]?.toString(),
+    ocrTransactionId: json["ocrTransactionId"]?.toString(),
+    ocrData: _ocrMap(json["ocrData"]),
   );
+
+  static Map<String, dynamic>? _ocrMap(dynamic v) {
+    if (v is Map) return Map<String, dynamic>.from(v);
+    if (v is String && v.isNotEmpty) {
+      try {
+        final d = json.decode(v);
+        if (d is Map) return Map<String, dynamic>.from(d);
+      } catch (_) {}
+    }
+    return null;
+  }
 
   Map<String, dynamic> toJson() => {
     "id": id,

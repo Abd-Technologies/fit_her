@@ -50,6 +50,21 @@ class Appointment {
   // side already applies server-side. Use `resolvedMeetLink` below
   // rather than reading this directly.
   dynamic meetLink;
+  // Which consultation this is for the client (1 = her first, 2 = her
+  // second...). Sent by the dietitian's appointments endpoint; null on
+  // older backends.
+  int? consultNumber;
+  // The client's package (UserPlan id) this booking belongs to. Lets the
+  // dietitian generate the plan straight from the session's profile.
+  int? planId;
+  // Nov 2026: attendance from the app (helper/consultAttendance.js on the
+  // server). `attendance` = {client: {joinedAt, leftAt, leftHow, minutes,
+  // joins, minutesFrom}, dietitian: {startedAt, endedAt, endedHow}, source}.
+  Map<String, dynamic>? attendance;
+  String? clientJoinTapAt;
+  String? clientNoShowAt;
+  String? attendanceFlag;
+  String? attendanceSource;
 
   Appointment({
     required this.id,
@@ -63,6 +78,13 @@ class Appointment {
     required this.slotDiet,
     this.meetLink,
     this.kind,
+    this.consultNumber,
+    this.planId,
+    this.attendance,
+    this.clientJoinTapAt,
+    this.clientNoShowAt,
+    this.attendanceFlag,
+    this.attendanceSource,
   });
 
   /// The link to actually open for this appointment: this appointment's
@@ -93,6 +115,15 @@ class Appointment {
     slotDiet: json["SlotDiet"]==null?null:SlotDiet.fromJson(json["SlotDiet"]),
     meetLink: json["meetLink"],
     kind: json["kind"],
+    consultNumber: json["consultNumber"] is num
+        ? (json["consultNumber"] as num).toInt()
+        : null,
+    planId: json["planId"] is num ? (json["planId"] as num).toInt() : null,
+    attendance: json["attendance"] is Map ? Map<String, dynamic>.from(json["attendance"]) : null,
+    clientJoinTapAt: json["clientJoinTapAt"]?.toString(),
+    clientNoShowAt: json["clientNoShowAt"]?.toString(),
+    attendanceFlag: json["attendanceFlag"]?.toString(),
+    attendanceSource: json["attendanceSource"]?.toString(),
   );
 
   Map<String, dynamic> toJson() => {
@@ -107,6 +138,7 @@ class Appointment {
     "SlotDiet": slotDiet?.toJson(),
     "meetLink": meetLink,
     "kind": kind,
+    "consultNumber": consultNumber,
   };
 }
 

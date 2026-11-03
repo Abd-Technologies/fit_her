@@ -63,3 +63,26 @@ ios/Runner/MobileRTC.xcframework
 ios/Runner/MobileRTCResources.bundle
 ios/Runner/MobileRTCScreenShare.xcframework
 ios/Runner/zoomcml.xcframework
+# ── Added Oct 2026: working files that should never be committed ──
+# Backup / draft copies made while editing
+*.bak
+*.bak_*
+*.bak[0-9]*
+pubspec.yaml.bak*
+*.draft
+*.orig
+*.rej
+*.patch
+_to_delete/
+# Local diagnostics
+diag.ps1
+diag_log.txt
+# Secrets (env variants, Android signing)
+.env.*
+!.env.example
+android/key.properties
+*.jks
+*.keystore
+# Editor / tool folders
+.claude/
+.vscode/

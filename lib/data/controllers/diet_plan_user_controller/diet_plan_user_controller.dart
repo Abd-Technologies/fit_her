@@ -356,11 +356,45 @@ class DietPlanUserController extends GetxController {
   /// Convenience wrapper around [todaysDayNumber] — returns the matching
   /// [DietPlanDayV2] or null when the plan has ended (today number
   /// exceeds `planDays`).
+  /// Oct 2026: her plan has ended but her paid package hasn't, and her next
+  /// plan isn't here yet → the Diet tab keeps showing her plan again from
+  /// Day 1 ("keep following your plan"), never an empty tab. Not for a
+  /// free trial (nextStep explore_plans) or an ended package.
+  bool get isRepeating {
+    final plan = activePlan.value;
+    final ctx = bookingContext.value;
+    if (plan == null || plan.planDays <= 0 || !planHasEnded || ctx == null) return false;
+    if (ctx.planEnded) return false;
+    if (ctx.nextStep == null || ctx.nextStep == 'explore_plans') return false;
+    final ends = ctx.packageEndsOn;
+    if (ends != null && ends.isBefore(DateTime.now())) return false;
+    return true;
+  }
+
+  /// Plan day shown today while repeating (1..planDays).
+  int? get repeatDayNumber {
+    final plan = activePlan.value;
+    final n = todaysDayNumber;
+    if (plan == null || n == null || plan.planDays <= 0) return null;
+    return ((n - 1) % plan.planDays) + 1;
+  }
+
+  DietPlanDayV2? _planDay(int n) {
+    final plan = activePlan.value;
+    if (plan == null) return null;
+    for (final d in plan.days) {
+      if (d.dayNumber == n) return d;
+    }
+    return null;
+  }
+
   DietPlanDayV2? get todaysDay {
     final plan = activePlan.value;
     final n = todaysDayNumber;
     if (plan == null || n == null) return null;
-    if (n > plan.planDays) return null;
+    if (n > plan.planDays) {
+      return isRepeating ? _planDay(repeatDayNumber!) : null;
+    }
     DietPlanDayV2? match;
     for (final d in plan.days) {
       if (d.dayNumber == n) {
@@ -447,6 +481,7 @@ class DietPlanUserController extends GetxController {
   DietPlanDayV2? get selectedDay {
     final plan = activePlan.value;
     if (plan == null) return null;
+    if (isRepeating) return todaysDay; // today only while repeating
     final n = effectiveDayNumber;
     for (final d in plan.days) {
       if (d.dayNumber == n) return d;

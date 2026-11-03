@@ -53,22 +53,23 @@ class PaidHeroTopBar extends StatelessWidget {
                   child: const Text('🔔', style: TextStyle(fontSize: 13)),
                 ),
                 Positioned(
-                  top: 1,
-                  right: 1,
+                  top: -2,
+                  right: -2,
                   child: Obx(() {
                     final show = Get.find<HomeController>().showDotHome.value;
                     if (!show) return const SizedBox.shrink();
+                    // 10px (was 6px with a 2px border: hardly visible).
                     return Container(
-                      width: 6,
-                      height: 6,
+                      width: 10,
+                      height: 10,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFE24B4A),
+                        color: const Color(0xFFFF4D4D),
                         shape: BoxShape.circle,
                         // Border matches hero bg so the dot looks "cut" into
                         // the bell circle, not floating on top of it.
                         border: Border.all(
                           color: theme.heroBackground,
-                          width: 2,
+                          width: 1.5,
                         ),
                       ),
                     );

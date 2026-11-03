@@ -37,6 +37,7 @@ const Map<String, _StatusStyle> _kStatusStyles = {
   'AWAITING_PLAN': _StatusStyle('Plan due soon', Color(0xFF3B6FA0), Color(0xFFE3EEF7)),
   'ON_TRACK': _StatusStyle('On track', Color(0xFF4E9F3D), Color(0xFFE4F3DE)),
   'NEW': _StatusStyle('No consultation yet', Color(0xFF6F8B7A), Color(0xFFEFF3EF)),
+  'PLAN_ENDED': _StatusStyle('Plan ended', Color(0xFF8A8F87), Color(0xFFEDEFEA)),
 };
 
 _StatusStyle _styleFor(String? status) =>

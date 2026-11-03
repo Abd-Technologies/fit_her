@@ -71,7 +71,15 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     final auth = Get.find<AuthController>();
     final target = '${Directory.systemTemp.absolute.path}/post${auth.i}.jpg';
     auth.i++;
-    final compressed = await FlutterImageCompress.compressAndGetFile(picked.path, target, quality: 60);
+    // Oct 2026: max ~1080 px and good quality, so a post photo is a few
+    // hundred KB instead of several MB (feed loads much faster).
+    final compressed = await FlutterImageCompress.compressAndGetFile(
+      picked.path,
+      target,
+      quality: 75,
+      minWidth: 1080,
+      minHeight: 1080,
+    );
     if (!mounted) return;
     setState(() => _newImage = File(compressed?.path ?? picked.path));
   }

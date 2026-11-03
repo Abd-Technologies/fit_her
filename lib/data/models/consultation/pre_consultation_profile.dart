@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// Mirrors the backend PreConsultationProfile model. One profile per user;
 /// persists across plan renewals. The dietitian-only `dietitianComments`
 /// field is intentionally omitted here — it's stripped from the user-side
@@ -64,12 +66,12 @@ class PreConsultationProfile {
 
   factory PreConsultationProfile.fromJson(Map<String, dynamic> json) {
     return PreConsultationProfile(
-      id: json['id'] as int?,
-      userId: json['userId'] as int?,
+      id: json['id'] is int ? json['id'] as int : null,
+      userId: json['userId'] is int ? json['userId'] as int : null,
       goals: json['goals'] as String?,
       allergies: json['allergies'] as String?,
       pregnancyMenstrualStatus: json['pregnancyMenstrualStatus'] as String?,
-      dietaryPreferences: json['dietaryPreferences'] as List<dynamic>?,
+      dietaryPreferences: _asList(json['dietaryPreferences']),
       medicalConditions: json['medicalConditions'] as String?,
       familyHistory: json['familyHistory'] as String?,
       lifestyle: _asMap(json['lifestyle']),
@@ -78,7 +80,7 @@ class PreConsultationProfile {
       currentMedications: json['currentMedications'] as String?,
       workoutSection: _asMap(json['workoutSection']),
       stepsCompleted: _asMap(json['stepsCompleted']),
-      isComplete: (json['isComplete'] as bool?) ?? false,
+      isComplete: json['isComplete'] == true || json['isComplete'] == 1,
       lastUserUpdate: _asDate(json['lastUserUpdate']),
       lastDietitianEdit: _asDate(json['lastDietitianEdit']),
       mealsPerDay: json['mealsPerDay'] is int
@@ -104,8 +106,28 @@ class PreConsultationProfile {
       };
 }
 
+// JSON columns can arrive as real JSON OR as a JSON-encoded string
+// (MariaDB). Accept both, and never throw — a hard cast here used to
+// crash parsing and leave the dietitian's form screen stuck loading.
 Map<String, dynamic>? _asMap(dynamic raw) {
   if (raw is Map) return Map<String, dynamic>.from(raw);
+  if (raw is String && raw.trim().isNotEmpty) {
+    try {
+      final v = jsonDecode(raw);
+      if (v is Map) return Map<String, dynamic>.from(v);
+    } catch (_) {}
+  }
+  return null;
+}
+
+List<dynamic>? _asList(dynamic raw) {
+  if (raw is List) return raw;
+  if (raw is String && raw.trim().isNotEmpty) {
+    try {
+      final v = jsonDecode(raw);
+      if (v is List) return v;
+    } catch (_) {}
+  }
   return null;
 }
 

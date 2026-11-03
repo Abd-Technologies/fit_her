@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import '../../UI/dashboard_module/profile_screen/profile_screen_user.dart';
 import '../../data/Repos/plan_freeze_repo/plan_freeze_repository.dart';
 import '../../data/controllers/auth_controller/auth_controller.dart';
+import '../../data/controllers/home_controller/home_controller.dart';
 import '../../data/controllers/paid_home_controller/paid_home_controller.dart';
 import '../../values/constants.dart';
 import 'pill_button.dart';
@@ -82,6 +83,9 @@ class _PlanFrozenBannerState extends State<PlanFrozenBanner> {
           res.body['status'] == '1' &&
           res.body['data'] is Map) {
         status = Map<String, dynamic>.from(res.body['data']);
+      }
+      if (status != null && Get.isRegistered<HomeController>()) {
+        Get.find<HomeController>().planFrozen.value = status['isFrozen'] == true;
       }
       if (mounted) {
         setState(() {

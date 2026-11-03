@@ -16,6 +16,7 @@ import '../../../widgets/custom_button.dart';
 import '../../auth_module/edit_user/edit_user.dart';
 import '../../chat/widgets/chat_room.dart';
 import '../add_new_user/add_new_user.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class AllUsersScreen extends StatelessWidget {
   AllUsersScreen({Key? key, this.isCustomerSupport = false}) : super(key: key);
@@ -204,7 +205,7 @@ class AllUsersScreen extends StatelessWidget {
                       onConfirm: () async {
                         Get.back();
                         if (user?.user != null) {
-                          Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+                          Get.dialog(const Center(child: FhLoader()), barrierDismissible: false);
                           final authController = Get.find<AuthController>();
                           final response = await authController.authRepo.deleteUser(
                             id: user!.user.id.toString(),

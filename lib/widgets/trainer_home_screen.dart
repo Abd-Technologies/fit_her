@@ -8,11 +8,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import '../UI/dashboard_module/session_screen/session_screen.dart';
+import '../UI/class_feedback/class_feedback_screens.dart';
+import '../UI/trainer_class/trainer_class_screen.dart';
 import '../data/controllers/call_controller/chat_controller.dart';
 import '../data/controllers/home_controller/home_controller.dart';
 import '../data/models/add_package/add_package_model.dart';
 import '../values/my_imgs.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
+import 'package:fitness_zone_2/widgets/anim/motion.dart';
 
 class TrainerHomeScreen extends StatefulWidget {
   TrainerHomeScreen({Key? key}) : super(key: key);
@@ -22,6 +25,7 @@ class TrainerHomeScreen extends StatefulWidget {
 
 class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
   WorkOutController workOutController = Get.find();
+  int _refreshTick = 0;
   final CallController callController = Get.put(CallController());
 
   final List days = [
@@ -42,7 +46,15 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
   @override
   Widget build(BuildContext context) {
     var textTheme = Theme.of(context).textTheme;
-    return SingleChildScrollView(
+    // Pull down to reload classes and ratings from the server.
+    return RefreshIndicator(
+      color: MyColors.buttonColor,
+      onRefresh: () async {
+        setState(() => _refreshTick++);
+        await workOutController.getTrainerHomeFunc(silent: true);
+      },
+      child: SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: 20.w),
         child: Column(
@@ -70,6 +82,8 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
                 ),
               ],
             ),
+            // Class feedback from clients (average + tags, no names).
+            TrainerRatingsTile(key: ValueKey('ratings_$_refreshTick')),
             SizedBox(
               height: 10.h,
             ),
@@ -127,17 +141,10 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
                                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                     children: [
                                       GestureDetector(
-                                        onTap: () {
-                                          Get.to(() => SessionScreen(
-                                                slotId: slot.id,
-                                                status: RxString(slot.status ??""),
-                                                isDiet: false,
-                                                planId: workOutController.getTrainerHome?.plan?.id.toString(),
-                                                userId: 0,
-                                                link: slot.trainerLink,
-                                                token: slot.token ?? "",
-                                              ));
-                                          workOutController.getFreeTrialUserDetails(slot.id.toString());
+                                        onTap: () async {
+                                          // One-tap Start screen (Zoom room comes from admin).
+                                          await Get.to(() => TrainerClassScreen(slotId: slot.id));
+                                          workOutController.getTrainerHomeFunc();
                                         },
                                         // Get.to(() => PasteLink(
                                         //       slotId: slot.id,
@@ -148,7 +155,7 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
                                           height: 28.h,
                                           decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), color: MyColors.buttonColor),
                                           child: Text(
-                                            "Paste Link",
+                                            "Open class",
                                             style: textTheme.titleLarge,
                                           ),
                                         ),
@@ -183,7 +190,7 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
                               },
                               itemCount: day.slots.length)
                         ],
-                      );
+                      ).fhEnter(context, index: planIndex);
                     },
                     separatorBuilder: (BuildContext context, int index) {
                       return SizedBox(
@@ -193,7 +200,7 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
                     itemCount: workOutController.getTrainerHome!.trainerSlots.length,
                   )
                 : const Center(
-                    child: CircularProgressIndicator(),
+                    child: FhLoader(),
                   )),
             const SizedBox(
               height: 20,
@@ -229,6 +236,7 @@ class _TrainerHomeScreenState extends State<TrainerHomeScreen> {
             // )
           ],
         ),
+      ),
       ),
     );
   }

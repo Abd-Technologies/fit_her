@@ -14,6 +14,7 @@ import '../../values/dimens.dart';
 import '../../values/my_colors.dart';
 import '../../widgets/app_bar_widget.dart';
 import '../../widgets/custom_button.dart';
+import 'package:fitness_zone_2/widgets/anim/fh_loader.dart';
 
 class CycleSettingsScreen extends StatefulWidget {
   const CycleSettingsScreen({Key? key}) : super(key: key);
@@ -218,7 +219,7 @@ class _CycleSettingsScreenState extends State<CycleSettingsScreen> {
       ),
       body: _loading
           ? const Center(
-              child: CircularProgressIndicator(color: MyColors.buttonColor))
+              child: FhLoader())
           : SingleChildScrollView(
               child: Padding(
                 padding:

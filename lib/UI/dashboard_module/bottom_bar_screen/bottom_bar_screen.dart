@@ -19,16 +19,18 @@ import '../../../data/controllers/workout_controller/work_out_controller.dart';
 import '../../../values/constants.dart';
 import '../../../values/my_colors.dart';
 import '../../../values/my_imgs.dart';
-import '../../../widgets/review_bottom_sheet.dart';
 import 'package:fitness_zone_2/data/Repos/checkin_repo/checkin_repository.dart';
 import 'package:fitness_zone_2/data/Repos/cycle_repo/cycle_data_repository.dart';
 import 'package:fitness_zone_2/data/api_provider/api_provider.dart';
 import 'package:fitness_zone_2/data/services/notification_scheduler.dart';
-import 'package:fitness_zone_2/UI/auth_module/whats_new_screen.dart';
 import '../../chat/chat_home_screen.dart';
 import '../home_screen/home_screen.dart';
 import '../profile_screen/profile_screen.dart';
 import '../../../data/controllers/socket_controller.dart';
+import '../../../widgets/notification_permission_sheet.dart';
+import '../../../helper/popup_manager.dart';
+import '../../../helper/app_update_checker.dart';
+import '../../../widgets/announcement_popup.dart';
 
 class BottomBarScreen extends StatefulWidget {
   int? index;
@@ -45,19 +47,39 @@ class _BottomBarScreenState extends State<BottomBarScreen> {
   late List<Widget> _widgetOption = [];
   final Set<int> _activatedTabs = {};
   AuthController authController = Get.find();
+  Worker? _opensWorker;
+  ModalRoute<dynamic>? _myRoute;
   @override
   void initState() {
     super.initState();
     _activatedTabs.add(widget.index ?? 0);
+    // Pop-up manager: knows when Home is the open tab, and asks again on
+    // every new app open for pop-ups that lost their turn.
+    PopupManager.init();
+    PopupManager.onHomeTab = (widget.index ?? 0) == 0;
+    _opensWorker = ever(PopupManager.opens, (_) {
+      if (!mounted) return;
+      // Required update is checked again on every app open, not only at
+      // the start (once-a-day rule for the optional one still applies).
+      AppUpdateChecker.check();
+      NotificationPermissionSheet.maybeAsk();
+      _maybeShowAnnouncement();
+    });
     // Register SocketController here so any tab (especially FeedScreen) can
     // safely call Get.find<SocketController>() regardless of visit order.
     // Admin has no FeedScreen tab, but registering early is harmless.
     if (!Get.isRegistered<SocketController>()) {
       Get.put(SocketController(), permanent: true);
     }
+    // "Turn on notifications" while they're off; "Not now" = 1 day.
+    Future.delayed(const Duration(milliseconds: 2500), () {
+      if (mounted) NotificationPermissionSheet.maybeAsk();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (authController.loginAsA.value == Constants.user) {
         final homeController = Get.find<HomeController>();
+        // Paused plan? (no classes / consultations while paused)
+        homeController.refreshPlanFrozen();
         homeController.getPlansUser();
         homeController.getMyTrialJourney();
         if (Get.isRegistered<WorkOutController>()) {
@@ -115,36 +137,12 @@ class _BottomBarScreenState extends State<BottomBarScreen> {
                     ProfileScreen(),
                   ];
 
-    if (authController.sharedPreferences
-            .getString(Constants.announcementNotification) !=
-        null) {
-      var announcement = jsonDecode(authController.sharedPreferences
-          .getString(Constants.announcementNotification)!);
-      DateTime announcementDate = DateTime.parse(announcement["date"]);
-      Duration diff = DateTime.now().difference(announcementDate);
-
-      // show if announcement is less than 1 day old
-      if (diff.inDays == 0) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          HelpingWidgets.showCustomDialog(context, () {
-            Get.back();
-            authController.sharedPreferences
-                .remove(Constants.announcementNotification);
-          }, announcement["title"], announcement["body"], MyImgs.logo,
-              buttonText: "Ok, Got It");
-        });
-      }
-    }
-    if (authController.sharedPreferences.getBool(Constants.giveReview) !=
-            null ||
-        authController.sharedPreferences.getBool(Constants.giveReview) ==
-            true) {
-      WidgetsBinding.instance.addPostFrameCallback((value) {
-        authController.sharedPreferences.remove(Constants.giveReview);
-        Get.bottomSheet(
-            isScrollControlled: true, FeedbackBottomSheet("0", "0"));
-      });
-    }
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _maybeShowAnnouncement());
+    // Old "rate your class" popup on every app open after a class is
+    // gone: class feedback is now one card on home after the class ends
+    // (widgets/class_feedback). Clear the leftover flag from old builds.
+    authController.sharedPreferences.remove(Constants.giveReview);
 
     // Cycle data migration check — only for regular users
     if (authController.loginAsA.value == Constants.user) {
@@ -155,15 +153,37 @@ class _BottomBarScreenState extends State<BottomBarScreen> {
     }
   }
 
+  // Pop-up manager: this route on top = nothing else open over Home
+  // (works for paid and trial/free Home alike).
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _myRoute = ModalRoute.of(context);
+    PopupManager.homeRoute = _myRoute;
+  }
+
+  @override
+  void dispose() {
+    if (PopupManager.homeRoute == _myRoute) {
+      PopupManager.homeRoute = null;
+    }
+    _opensWorker?.dispose();
+    super.dispose();
+  }
+
+  /// Announcement saved from a push (widgets/announcement_popup.dart).
+  void _maybeShowAnnouncement() => AnnouncementPopup.maybeShow();
+
   void _checkCycleMigration() async {
     final repo = Get.find<CycleDataRepository>();
     final token =
         authController.sharedPreferences.getString(Constants.accessToken) ?? '';
     final response = await repo.getCycleData(accessToken: token);
     if (response.body != null && response.body['status'] == '1') {
-      if (response.body['data'] == null) {
-        Get.to(() => const WhatsNewScreen());
-      } else {
+      // No cycle data: the full-screen "What's new" page used to open
+      // here. Removed (Oct 2026); her period date comes from the health
+      // form and the "Add your period date" card on Home.
+      if (response.body['data'] != null) {
         authController.sharedPreferences.setInt(
           'cycle_data_provided',
           response.body['data']['dataProvided'] ?? 0,
@@ -216,7 +236,12 @@ class _BottomBarScreenState extends State<BottomBarScreen> {
       }
     }
 
-    // 3. Reschedule
+    // 3. Reschedule. The weekly check-in is for paid plans only: no
+    // reminder once her plan has ended.
+    // Oct 2026: the phone's own Sunday reminder is off for everyone. The
+    // server sends the Sunday 7 pm push only when her check-in is due
+    // (helper/notifications/weeklyCheckin.js); both together sent it twice.
+    prefs = {...prefs, 'weeklyCheckin': 0};
     await NotificationScheduler.rescheduleAll(
       prefs: prefs,
       weeklyCheckinDone: weeklyDone,
@@ -294,6 +319,7 @@ class _BottomBarScreenState extends State<BottomBarScreen> {
             authController.sharedPreferences.setBool("showDot", false);
             authController.showDot.value = false;
           }
+          PopupManager.onHomeTab = value == 0;
           setState(() {
             widget.index = value;
             _activatedTabs.add(value);
@@ -479,6 +505,7 @@ class _BottomBarScreenState extends State<BottomBarScreen> {
               ),
             ],
             onTap: (value) async {
+              PopupManager.onHomeTab = value == 0;
               setState(() {
                 widget.index = value;
                 _activatedTabs.add(value);

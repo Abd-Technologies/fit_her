@@ -44,7 +44,8 @@ class GeneratePlanScreen extends StatefulWidget {
 class _GeneratePlanScreenState extends State<GeneratePlanScreen> {
   static const int _kMinDays = 3;
   static const int _kMaxDays = 14;
-  static const int _kDefaultDays = 7;
+  // 14 days = the plan lasts until her Day-15 check-in / follow-up.
+  static const int _kDefaultDays = 14;
   static const int _kDefaultMeals = 5;
 
   // Rotating progress messages while the AI call is in flight. Vertex/
@@ -330,7 +331,7 @@ class _GeneratePlanScreenState extends State<GeneratePlanScreen> {
               ),
               SizedBox(height: 4.h),
               Text(
-                'Most plans run for 7 days before review',
+                '14 days lasts until her Day-15 check-in',
                 style: TextStyle(
                   fontFamily: 'Poppins',
                   fontSize: 12.sp,

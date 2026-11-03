@@ -1,0 +1,97 @@
+# Build the iPhone app and upload it to App Store Connect (TestFlight).
+# Run it from GitHub: Actions > "iOS release" > Run workflow.
+# Setup and secrets: docs/CI_SETUP.md
+name: iOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "Build number. Empty = the +N in pubspec.yaml"
+        required: false
+
+concurrency:
+  group: ios-release
+  cancel-in-progress: false
+
+env:
+  BUNDLE_ID: com.abtechnologies.fitHer
+  TEAM_ID: 9BDW3F8A65
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.35.6"
+          channel: stable
+          cache: true
+
+      - name: Distribution certificate
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          p12-password: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+
+      - name: App Store provisioning profile
+        uses: apple-actions/download-provisioning-profiles@v3
+        with:
+          bundle-id: ${{ env.BUNDLE_ID }}
+          profile-type: IOS_APP_STORE
+          issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ secrets.APPSTORE_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+
+      - name: Use manual signing for this build
+        run: |
+          PROFILE=$(ls -t ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)
+          NAME=$(security cms -D -i "$PROFILE" | plutil -extract Name raw -)
+          echo "Profile: $NAME"
+          PBX=ios/Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' "$PBX"
+          sed -i '' "s/PROVISIONING_PROFILE_SPECIFIER = \"\";/PROVISIONING_PROFILE_SPECIFIER = \"$NAME\"; CODE_SIGN_IDENTITY = \"Apple Distribution\";/g" "$PBX"
+          cat > ios/ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>provisioningProfiles</key><dict>
+              <key>${BUNDLE_ID}</key><string>${NAME}</string>
+            </dict>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          PLIST
+          sed -i '' 's/^ *//' ios/ExportOptions.plist
+
+      - run: flutter pub get
+
+      - name: Pods
+        working-directory: ios
+        run: pod install --repo-update
+
+      - name: Build IPA
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.build_number }}" ]; then ARGS="--build-number=${{ inputs.build_number }}"; fi
+          flutter build ipa --release --export-options-plist=ios/ExportOptions.plist $ARGS
+          IPA=$(ls build/ios/ipa/*.ipa | head -1)
+          echo "IPA=$IPA" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fither-ipa
+          path: build/ios/ipa/*.ipa
+
+      - name: Upload to App Store Connect
+        uses: apple-actions/upload-testflight-build@v3
+        with:
+          app-path: ${{ github.workspace }}/${{ env.IPA }}
+          issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ secrets.APPSTORE_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_PRIVATE_KEY }}

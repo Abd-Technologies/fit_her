@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:get/get.dart';
 
 import '../../UI/free_trail/trial_onboarding_screen.dart';
@@ -6,6 +7,7 @@ import '../../UI/free_trail/trial_summary_screen.dart';
 import '../../UI/plans_module/all_plans.dart';
 import '../../data/controllers/auth_controller/auth_controller.dart';
 import '../../data/controllers/home_controller/home_controller.dart';
+import '../anim/motion.dart';
 
 /// Navigation mode for [enterTrialOnboarding] -- lets each call site keep
 /// its own back-stack behavior (push vs. replace vs. clear-to-root)
@@ -287,23 +289,27 @@ class _IdleCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => _onStartTrial(context),
-            child: Container(
-              alignment: Alignment.center,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              decoration: BoxDecoration(
-                color: _accent,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                'Start ${Get.find<HomeController>().trialDays.value}-day free trial →',
-                style: const TextStyle(
-                  fontFamily: 'Poppins',
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
+          _CtaBreath(
+            color: _accent,
+            radius: BorderRadius.circular(12),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _onStartTrial(context),
+              child: Container(
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                decoration: BoxDecoration(
+                  color: _accent,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  'Start ${Get.find<HomeController>().trialDays.value}-day free trial →',
+                  style: const TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
@@ -325,6 +331,45 @@ class _IdleCard extends StatelessWidget {
   }
 
   void _onStartTrial(BuildContext context) => showTrialStartDialog();
+}
+
+/// Animation pass (#6): the main "Start free trial" button breathes
+/// softly — scale 1.0 <-> 1.03 with a glow, ~1.8 s per loop, starting a
+/// moment after the card appears. Reduce motion: a still button.
+class _CtaBreath extends StatelessWidget {
+  const _CtaBreath({required this.child, required this.color, required this.radius});
+  final Widget child;
+  final Color color;
+  final BorderRadius radius;
+
+  @override
+  Widget build(BuildContext context) {
+    if (Motion.calm(context)) return child;
+    return child
+        .animate(
+          delay: const Duration(milliseconds: 900),
+          onPlay: (controller) => controller.repeat(reverse: true),
+        )
+        .custom(
+          duration: const Duration(milliseconds: 900),
+          curve: Curves.easeInOut,
+          builder: (context, v, child) => Transform.scale(
+            scale: 1.0 + 0.03 * v,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: radius,
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withOpacity(0.10 + 0.30 * v),
+                    blurRadius: 8 + 12 * v,
+                  ),
+                ],
+              ),
+              child: child,
+            ),
+          ),
+        );
+  }
 }
 
 // ─── Small info row used inside the trial-start confirmation dialog. ────
