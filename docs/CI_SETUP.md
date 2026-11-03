@@ -65,6 +65,23 @@ Steps:
 3. Turn the .p12 into text: `base64 -i dist.p12 | pbcopy` (Mac) or the PowerShell line above.
 4. **Profile:** developer.apple.com > Profiles > make sure there is an **App Store** profile for `com.abtechnologies.fitHer` that uses that certificate. The workflow downloads it by itself.
 
+## Zoom SDK files (one time)
+
+The Zoom SDK files are too big for git, so they are in `.gitignore`. The workflows download them from a GitHub Release called `zoom-sdk`:
+
+| File | Used by | Comes from |
+|---|---|---|
+| `mobilertc.aar` | Android | `android/app/libs/mobilertc.aar` |
+| `ios-zoom-sdk.zip` | iOS | a zip of `MobileRTC.xcframework`, `MobileRTCScreenShare.xcframework`, `zoomcml.xcframework` and `MobileRTCResources.bundle` from `ios/Runner` (all four at the top of the zip) |
+
+Make the release once: GitHub repo > **Releases** > **Draft a new release** > tag `zoom-sdk` > attach both files > **Publish**.
+Upload a new version there when you update the Zoom SDK.
+
+## App Store profile for CI (one time)
+
+developer.apple.com > **Profiles** > **+** > **App Store Connect** > App ID `com.abtechnologies.fitHer` > pick the **same Distribution certificate** you exported as .p12 > name it exactly **FitHer AppStore CI** > Generate.
+The workflow uses the profile with that name. Xcode's own "iOS Team Store Provisioning Profile" does not work for CI.
+
 ## What the workflows do
 
 **Android:** writes the upload key from the secrets, runs `flutter build appbundle --release`, uploads the .aab to the track you picked, then deletes the key file. The .aab is also saved under the run's **Artifacts**.
