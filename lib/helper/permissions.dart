@@ -19,11 +19,12 @@ class PermissionOfPhotos {
     } else {
       DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
       AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
-      if (androidInfo.version.sdkInt < 33) {
-        platform = Permission.storage;
-      } else {
-        platform = Permission.photos;
+      if (androidInfo.version.sdkInt >= 33) {
+        // Android 13+: image_picker opens the system photo picker, which needs
+        // no permission. We no longer declare READ_MEDIA_IMAGES (Play policy).
+        return true;
       }
+      platform = Permission.storage;
     }
 
     var stauts = await platform.status;
