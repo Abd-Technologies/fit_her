@@ -217,10 +217,11 @@ class PaidHeroGreeting extends StatelessWidget {
     case CyclePhase.luteal:
       return (day: const Color(0xFFFDE4A0), streak: const Color(0xFFFAC775));
     case CyclePhase.menstrual:
-      // H-04 uses white @ 25% for streak color — period day 1 de-emphasis.
+      // Softer than gold during the period (H-04 intent), but still readable:
+      // 25% white was nearly invisible on the dark red card (Nov 2026).
       return (
         day: const Color(0xFFFFB8B8),
-        streak: Color.fromRGBO(255, 255, 255, 0.25),
+        streak: Color.fromRGBO(255, 255, 255, 0.6),
       );
   }
 }

@@ -1301,10 +1301,12 @@ class _TrialOnboardingScreenState extends State<TrialOnboardingScreen> {
                     ],
                   ),
                 ),
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(20, 4, 20, 8),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
                   child: Text(
-                    'Tap a class to pick it for your reminders. You can join any class during your trial.',
+                    widget.setupMode
+                        ? 'Tap a class to pick it for your reminders. You can still join any class you like.'
+                        : 'Tap a class to pick it for your reminders. You can join any class during your trial.',
                     style: TextStyle(
                       fontFamily: 'Poppins',
                       fontSize: 11.5,

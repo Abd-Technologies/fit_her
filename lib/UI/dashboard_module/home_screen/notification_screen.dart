@@ -11,6 +11,7 @@ import '../../../widgets/trial_moments/trial_moments.dart';
 import '../../plans_module/all_plans.dart';
 import '../../pre_consultation/pre_consultation_form_screen.dart';
 import '../bottom_bar_screen/bottom_bar_screen.dart';
+import '../../../screens/paid_home_screen_v2.dart';
 import '../../diet_screen/today_sessions_screen.dart';
 import '../../../data/controllers/diet_contoller/diet_controller.dart';
 
@@ -120,6 +121,12 @@ class _NotificationScreenState extends State<NotificationScreen> {
     }
     if (t == 'preConsultReminder') return ('Fill my form', () => PreConsultationFormScreen.openIfNeeded());
     if (t == 'weeklyCheckin') return ('Do my check-in', () => WeeklyCheckinSheet.open());
+    if (t == 'lunaDaily') {
+      return ('Log now', () {
+        PaidHomeScreenV2.requestInsights();
+        Get.offAll(() => BottomBarScreen(index: 0));
+      });
+    }
     // Trial moments (Day 3, your month, last day, ended): reopen the same
     // sheet the push opened (Nov 2026).
     if (t == 'trialMoment') {

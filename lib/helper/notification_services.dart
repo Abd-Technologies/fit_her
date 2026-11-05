@@ -39,6 +39,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../values/constants.dart';
 import '../UI/diet_screen/dietitian_v2/plans_to_deliver_screen.dart';
 import '../UI/dashboard_module/bottom_bar_screen/bottom_bar_screen.dart';
+import '../widgets/paid_home_v2/luna_evening_popup.dart';
 import '../UI/free_trail/trial_summary_screen.dart';
 import '../values/my_imgs.dart';
 import '../widgets/app_bar_widget.dart';
@@ -201,6 +202,8 @@ class NotificationServices {
       _refreshConsultation(message);
       // Her starter plan was made in the background: show it right away.
       if (message.data['type'] == 'trialPlanReady') _onTrialPlanReady();
+      // Luna 8 PM push while the app is open: her pop-up once Home is free.
+      if (message.data['type'] == 'lunaDaily') LunaEveningPopup.maybeShow(fromPush: true);
       _handleForegroundMessage(message, context);
       onNotificationGet(message, context);
     });
@@ -619,6 +622,17 @@ class NotificationServices {
     // "Your health form is waiting": open the form itself.
     if (message.data["type"] == "preConsultReminder") {
       whenHomeReady(() => PreConsultationFormScreen.openIfNeeded());
+      return;
+    }
+
+    // Luna 8 PM push (Nov 2026): Home, scrolled to "Today's insights".
+    // Tap → Home, then Luna's pop-up right away ("Log now" scrolls to
+    // the insights box).
+    if (message.data["type"] == "lunaDaily") {
+      whenHomeReady(() {
+        Get.offAll(() => BottomBarScreen(index: 0));
+        Future.delayed(const Duration(milliseconds: 1200), LunaEveningPopup.openFromPush);
+      });
       return;
     }
 

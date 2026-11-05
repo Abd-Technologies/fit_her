@@ -12,6 +12,7 @@
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fitness_zone_2/data/models/progress_v2/measurement_entry.dart';
 import 'package:fitness_zone_2/data/models/progress_v2/progress_models.dart';
 import 'package:fitness_zone_2/services/progress_report_pdf_service.dart';
 
@@ -56,6 +57,26 @@ void main() {
     final bytes = result.bytes;
     final header = String.fromCharCodes(bytes.take(5));
     expect(header, '%PDF-', reason: 'Not a PDF file?');
+  });
+
+  test('PDF includes body measurements from the weekly check-in', () async {
+    final result = await ProgressReportPdfService().generate(
+      summary: _fakeSummary(),
+      weight: _fakeWeight(),
+      hydration: _fakeHydration(),
+      symptoms: _fakeSymptoms(),
+      insights: _fakeInsights(),
+      userFullName: 'Shaista QA',
+      measurements: [
+        MeasurementEntry(date: DateTime(2026, 10, 1), weightKg: 70, waistCm: 84, hipsCm: 102, weekRating: 2),
+        MeasurementEntry(date: DateTime(2026, 10, 8), weightKg: 69.4, waistCm: 83, hipsCm: 101.5, weekRating: 3),
+        MeasurementEntry(date: DateTime(2026, 10, 15), weightKg: 68.8, waistCm: 82, hipsCm: 101, chestCm: 90, weekRating: 4),
+      ],
+    );
+    expect(await result.file.exists(), true);
+    final header = String.fromCharCodes(result.bytes.take(5));
+    expect(header, '%PDF-');
+    expect(result.bytes.length, greaterThan(2000));
   });
 }
 

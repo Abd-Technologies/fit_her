@@ -257,7 +257,7 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
     final isToday = start.year == now.year &&
         start.month == now.month &&
         start.day == now.day;
-    final title = (l.classType ?? 'Live class').trim();
+    final title = ((l.classType ?? '').trim().isEmpty ? 'Live class' : l.classType!.trim());
     final sub = <String>[];
     final trainer = (l.trainerName ?? '').trim();
     if (trainer.isNotEmpty) sub.add(trainer);
@@ -740,7 +740,7 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
     }
 
     // ── title ────────────────────────────────────────────────────────
-    final title = (l.classType ?? '').trim();
+    final title = (l.classType ?? '').trim().isEmpty ? 'Live class' : l.classType!.trim();
     final spaceIdx = title.indexOf(' ');
     final hasSuffix = spaceIdx > 0 && spaceIdx < title.length - 1;
     final firstWord = hasSuffix ? title.substring(0, spaceIdx) : title;
@@ -1162,7 +1162,7 @@ class _PaidHeroLiveSectionState extends State<PaidHeroLiveSection> {
   /// whose start/end strings don't parse. Identical to the previous
   /// unconditional behavior (status must literally be "In Progress").
   Widget _legacyCard(LiveClass l) {
-    final title = (l.classType ?? '').trim();
+    final title = (l.classType ?? '').trim().isEmpty ? 'Live class' : l.classType!.trim();
     final spaceIdx = title.indexOf(' ');
     final hasSuffix = spaceIdx > 0 && spaceIdx < title.length - 1;
     final firstWord = hasSuffix ? title.substring(0, spaceIdx) : title;

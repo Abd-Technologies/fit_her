@@ -1,4 +1,5 @@
 import '../widgets/weekly_checkin/weekly_checkin_card.dart';
+import '../widgets/paid_home_v2/luna_evening_popup.dart';
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -70,6 +71,16 @@ _DailyItem _nextDailyItem(HomeDashboardModel dashboard) {
 class PaidHomeScreenV2 extends StatefulWidget {
   const PaidHomeScreenV2({super.key});
 
+  /// Nov 2026: Luna's 8 PM push ("log today's insights"). Asks Home to
+  /// scroll to the "Today's insights" box. Works when Home is already on
+  /// screen and when it is still being built (cold start, offAll).
+  static final ValueNotifier<int> _focusInsights = ValueNotifier<int>(0);
+  static bool _focusPending = false;
+  static void requestInsights() {
+    _focusPending = true;
+    _focusInsights.value++;
+  }
+
   @override
   State<PaidHomeScreenV2> createState() => _PaidHomeScreenV2State();
 }
@@ -104,6 +115,29 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
   // water and sleep; once those are done it glides on to the stats row.
   // Only once per step per day, never while she is scrolling herself.
   final GlobalKey _waterSleepKey = GlobalKey();
+  final GlobalKey _insightsKey = GlobalKey();
+
+  /// Scrolls to the insights box (Luna push). Waits for the dashboard to
+  /// load if needed, up to about 8 s.
+  void _focusInsightsNow() {
+    if (!PaidHomeScreenV2._focusPending) return;
+    Future<void>(() async {
+      for (var i = 0; i < 20; i++) {
+        await Future.delayed(const Duration(milliseconds: 400));
+        if (!mounted) return;
+        final ctx = _insightsKey.currentContext;
+        if (ctx == null) continue;
+        PaidHomeScreenV2._focusPending = false;
+        await Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeInOutCubic,
+          alignment: 0.08,
+        );
+        return;
+      }
+    });
+  }
   final GlobalKey _statsKey = GlobalKey();
   _DailyItem? _lastNextUp;
   static final Set<String> _guidedToday = {};
@@ -172,7 +206,11 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    PaidHomeScreenV2._focusInsights.addListener(_focusInsightsNow);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusInsightsNow();
+      // Luna's evening check-in (after 8 PM, once a day, essential).
+      LunaEveningPopup.maybeShow();
       if (_controller.dashboard.value == null) {
         _controller.loadDashboard().then((_) {
           if (mounted) setState(() => _lastContactAt = AppClock.now());
@@ -215,6 +253,7 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
       if (mounted) ProfileSetupGate.checkAndShow();
       if (mounted) TrialMomentController.ensure().loadAndMaybeShow();
       if (mounted) SessionRatingPopup.maybeShow();
+      if (mounted) LunaEveningPopup.maybeShow();
     });
 
     _connectivitySub = Connectivity()
@@ -233,6 +272,7 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
 
   @override
   void dispose() {
+    PaidHomeScreenV2._focusInsights.removeListener(_focusInsightsNow);
     routeObserver.unsubscribe(this);
     WidgetsBinding.instance.removeObserver(this);
     _heartbeatTimer?.cancel();
@@ -522,12 +562,15 @@ class _PaidHomeScreenV2State extends State<PaidHomeScreenV2>
                       // it folds into three tiles. The soft glow still
                       // points at the next unfilled input.
                       _enter(
-                        TodayInsightsBox(
+                        KeyedSubtree(
+                          key: _insightsKey,
+                          child: TodayInsightsBox(
                           dashboard: dashboard,
                           glowMood: nextUp == _DailyItem.mood,
                           glowWater: nextUp == _DailyItem.water,
                           glowSleep: nextUp == _DailyItem.sleep,
                           waterSleepKey: _waterSleepKey,
+                        ),
                         ),
                         3,
                       ),

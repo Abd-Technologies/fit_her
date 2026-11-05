@@ -20,6 +20,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///  6. Urgent ones (required update, class cancelled) skip rules 2 to 5:
 ///     they only wait for the pop-up on screen to close, and they don't
 ///     use up the turn.
+///  7. Essential ones (Luna's evening check-in, [runEssential]) skip rules
+///     3 to 5: they wait for Home to be free, then always show.
 ///
 /// Things she opens herself (tapping a push, a Home card, a button) do
 /// not come here, so they always open.
@@ -153,6 +155,30 @@ class PopupManager {
       debugPrint('[popup_manager] $id: $e');
     } finally {
       _busy = false;
+    }
+    return true;
+  }
+
+  /// ESSENTIAL pop-up (Nov 2026, e.g. Luna's evening check-in): not part
+  /// of the planned queue, so no turn, no 30-min gap and not counted in
+  /// the 2 a day. Waits until Home is on screen with nothing on top (max
+  /// 10 min), shows, then uses up this open's turn so no planned pop-up
+  /// opens right after it. Returns false if Home never became free.
+  static Future<bool> runEssential(String id, Future<void> Function() show) async {
+    await Future.delayed(_settle);
+    for (var i = 0; i < _maxWait.inSeconds && !_homeFree; i++) {
+      await Future.delayed(_poll);
+    }
+    if (!_homeFree) return false;
+    _usedThisOpen = true;
+    _busy = true;
+    try {
+      await show();
+    } catch (e) {
+      debugPrint('[popup_manager] $id: $e');
+    } finally {
+      _busy = false;
+      await _setLastClosed();
     }
     return true;
   }
