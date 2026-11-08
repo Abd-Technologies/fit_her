@@ -11,6 +11,7 @@ import '../pages/plans/packages_page.dart';
 import '../pages/insight/dashboard_page.dart';
 import '../pages/insight/consult_day_page.dart';
 import '../pages/insight/escalations_page.dart';
+import '../pages/insight/journey_page.dart';
 import '../pages/insight/trial_plans_page.dart';
 import '../pages/talk/support_tickets_page.dart';
 import '../pages/insight/pcos_users_page.dart';
@@ -65,6 +66,8 @@ Widget portalPageFor(PortalMenuItem item) {
       return const CountriesPage();
     case 'dashboard':
       return const DashboardPage();
+    case 'journey':
+      return const JourneyPage();
     case 'consult_day':
       return const ConsultDayPage();
     case 'escalations':

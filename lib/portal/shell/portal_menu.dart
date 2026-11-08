@@ -18,6 +18,7 @@ List<PortalMenuItem> portalMenuFor(PortalRole role) {
     case PortalRole.admin:
       return const [
         PortalMenuItem('dashboard', 'Dashboard', Icons.space_dashboard_outlined, 2, group: 'Insight'),
+        PortalMenuItem('journey', 'User journey', Icons.route_outlined, 2, group: 'Insight'),
         PortalMenuItem('consult_day', 'Consultations by day', Icons.today_outlined, 2, group: 'Insight'),
         PortalMenuItem('escalations', 'Escalations', Icons.report_gmailerrorred_outlined, 2, group: 'Insight'),
         PortalMenuItem('trial_plans', 'Plans waiting / failed', Icons.hourglass_top_outlined, 2, group: 'Insight'),
